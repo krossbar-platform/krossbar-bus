@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "hub",
+    "monitor",
+    "client_lib",
+    "messages"
+]

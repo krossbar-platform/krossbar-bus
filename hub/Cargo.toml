@@ -1,0 +1,17 @@
+[package]
+name = "caro-hub"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bson = "2.3"
+bytes = "1.1"
+# TODO: Limit fetures
+tokio = { version = "1.19", features = ["full"] }
+parking_lot = "0.12"
+uuid = { version = "1.1", features = ["v4", "fast-rng"] }
+log = "0.4"
+pretty_env_logger = "0.4"
+sendfd = { version = "0.4", features = ["tokio"] }
+
+messages = { path = "../messages" }
