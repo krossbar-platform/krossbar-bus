@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::os::unix::net::UnixStream as OsUnixStream;
 
+use common::errors::Error as BusError;
+use common::messages::{Message, Response, ServiceRequest};
 use log::*;
-use messages::{Message, Response, ServiceRequest};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -129,7 +130,10 @@ impl Hub {
                     );
 
                     client
-                        .send_message(&service_name, Response::NameRegistered.into())
+                        .send_message(
+                            &service_name,
+                            Response::Error(BusError::NameRegistered).into(),
+                        )
                         .await;
                 } else {
                     self.clients.insert(service_name, client);
@@ -164,7 +168,10 @@ impl Hub {
                 );
 
                 self.client(&client_service_name)
-                    .send_message(&target_service_name, Response::NotFound.into())
+                    .send_message(
+                        &target_service_name,
+                        Response::Error(BusError::NotFound).into(),
+                    )
                     .await;
                 return;
             }

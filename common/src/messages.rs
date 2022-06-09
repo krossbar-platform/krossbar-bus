@@ -3,6 +3,8 @@ use bytes::{Buf, BytesMut};
 use log::*;
 use serde::{Deserialize, Serialize};
 
+use super::errors;
+
 pub const PROTOCOL_VERSION: i64 = 1;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -25,12 +27,9 @@ impl Into<Message> for ServiceRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Response {
     Ok,
-    NewConnection(String),
     Shutdown,
-    NotAllowed,
-    NotFound,
-    NameRegistered,
-    InvalidProtocol,
+    NewConnection(String),
+    Error(errors::Error),
 }
 
 impl Into<Message> for Response {

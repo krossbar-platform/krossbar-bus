@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use super::hub::ClientRequest;
 use super::permissions;
-use messages::{self, Message, Response, ServiceRequest};
+use common::errors::Error as BusError;
+use common::messages::{self, Message, Response, ServiceRequest};
 
 type Shared<T> = Arc<RwLock<T>>;
 
@@ -153,7 +154,7 @@ impl Client {
             }
         } else {
             error!("Unexpected data message send to the hub: {:?}", message);
-            Some(Response::InvalidProtocol)
+            Some(Response::Error(BusError::InvalidProtocol))
         }
     }
 
@@ -164,7 +165,7 @@ impl Client {
     ) -> Option<Response> {
         if protocol_version != messages::PROTOCOL_VERSION {
             warn!("Client with invalid protocol: {}", self.uuid);
-            return Response::InvalidProtocol.into();
+            return Response::Error(BusError::InvalidProtocol).into();
         }
 
         if !permissions::service_name_allowed(&"socket_addr".into(), &service_name) {
@@ -172,7 +173,7 @@ impl Client {
                 "Client is not allowed to register with name `{:?}`",
                 service_name
             );
-            return Response::NotAllowed.into();
+            return Response::Error(BusError::InvalidProtocol).into();
         }
 
         // Service requested new service_name. We update our service name here.
@@ -208,7 +209,7 @@ impl Client {
                 "Client `{:?}` is not allowed to connect with `{:?}`",
                 self_service_name, service_name
             );
-            return Some(Response::NotAllowed.into());
+            return Some(Response::Error(BusError::InvalidProtocol).into());
         }
 
         self.hub_tx
