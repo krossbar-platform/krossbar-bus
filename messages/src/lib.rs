@@ -1,5 +1,6 @@
 use bson;
 use bytes::{Buf, BytesMut};
+use log::*;
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: i64 = 1;
@@ -38,12 +39,24 @@ impl Into<Message> for Response {
     }
 }
 
+impl Response {
+    pub fn bytes(self) -> Vec<u8> {
+        let message: Message = self.into();
+        message.bytes()
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Message {
     ServiceRequest(ServiceRequest),
     Response(Response),
     DataMessage(i64),
+}
+
+impl Message {
+    pub fn bytes(self) -> Vec<u8> {
+        bson::to_raw_document_buf(&self).unwrap().into_bytes()
+    }
 }
 
 pub fn make_register_message(service_name: String) -> Message {
@@ -66,10 +79,14 @@ pub fn parse_buffer(buffer: &mut BytesMut) -> Option<Message> {
         // First lets find BSON document len
         let frame_len = i32::from_le_bytes(frame_len_bytes) as usize;
 
+        trace!("Trying to parse frame with len: {}", frame_len);
+
         // If buffer contains complete document, try to parse
         if buffer.len() >= frame_len {
             if let Ok(frame) = bson::from_slice(buffer.as_ref()) {
                 buffer.advance(frame_len);
+
+                trace!("Incoming BSON message of len: {}", frame_len);
 
                 return Some(frame);
             } else {

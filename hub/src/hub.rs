@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::os::unix::net::UnixStream as OsUnixStream;
 
 use log::*;
-use messages::{Message, ServiceRequest, Response};
+use messages::{Message, Response, ServiceRequest};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -22,17 +22,19 @@ pub struct ClientRequest {
 pub struct Hub {
     client_tx: Sender<ClientRequest>,
     hub_rx: Receiver<ClientRequest>,
+    shutdown_rx: Receiver<()>,
     anonymous_clients: HashMap<Uuid, Client>,
     clients: HashMap<String, Client>,
 }
 
 impl Hub {
-    pub fn new() -> Self {
+    pub fn new(shutdown_rx: Receiver<()>) -> Self {
         let (client_tx, hub_rx) = mpsc::channel::<ClientRequest>(32);
 
         Self {
             client_tx,
             hub_rx,
+            shutdown_rx,
             anonymous_clients: HashMap::new(),
             clients: HashMap::new(),
         }
@@ -57,6 +59,10 @@ impl Hub {
                             trace!("Incoming client message: {:?}", client_message);
 
                             self.handle_client_message(client_message).await
+                        }
+                        _ = self.shutdown_rx.recv() => {
+                            drop(listener);
+                            return Ok(());
                         }
                     }
                 }
@@ -91,11 +97,12 @@ impl Hub {
                     protocol_version: _,
                     service_name,
                 } => {
-                    self.handle_client_registration(request.uuid, service_name).await
-                },
+                    self.handle_client_registration(request.uuid, service_name)
+                        .await
+                }
                 ServiceRequest::Connect { service_name } => {
-                    self.handle_new_connection_request(request.service_name,
-                         service_name).await
+                    self.handle_new_connection_request(request.service_name, service_name)
+                        .await
                 }
             }
         } else {
@@ -107,6 +114,12 @@ impl Hub {
     }
 
     async fn handle_client_registration(&mut self, uuid: Uuid, service_name: String) {
+        trace!(
+            "Trying to assign service name `{:?}` to a client with uuid {:?}",
+            service_name,
+            uuid
+        );
+
         match self.anonymous_clients.remove(&uuid) {
             Some(mut client) => {
                 if self.clients.contains_key(&service_name) {
@@ -116,7 +129,7 @@ impl Hub {
                     );
 
                     client
-                        .drop(&service_name, Response::NameRegistered)
+                        .send_message(&service_name, Response::NameRegistered.into())
                         .await;
                 } else {
                     self.clients.insert(service_name, client);
@@ -129,7 +142,17 @@ impl Hub {
         }
     }
 
-    async fn handle_new_connection_request(&mut self, client_service_name: String, target_service_name: String) {
+    async fn handle_new_connection_request(
+        &mut self,
+        client_service_name: String,
+        target_service_name: String,
+    ) {
+        trace!(
+            "Trying to connect `{}` to the {}",
+            client_service_name,
+            target_service_name
+        );
+
         let (left, right) = OsUnixStream::pair().unwrap();
 
         {
@@ -158,6 +181,8 @@ impl Hub {
             .await;
 
         info!(
-            "Connected a service `{:?}` to `{:?}`", client_service_name, target_service_name)
+            "Connected a service `{:?}` to `{:?}`",
+            client_service_name, target_service_name
+        )
     }
 }

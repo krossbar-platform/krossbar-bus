@@ -40,6 +40,8 @@ impl Client {
     }
 
     pub fn run(uuid: Uuid, hub_tx: Sender<ClientRequest>, mut socket: UnixStream) -> Self {
+        trace!("Starting new client with UUID {:?}", uuid);
+
         let (client_tx, mut client_rx) = mpsc::channel::<HubReponse>(32);
 
         let client_handle = Self {
@@ -57,7 +59,9 @@ impl Client {
                 select! {
                     _ = socket.read_buf(&mut bytes) => {
                         if let Some(message) = messages::parse_buffer(&mut bytes) {
-                            Client::handle_client_message(&mut this, message).await;
+                            if let Some(response) = this.handle_client_message(message).await {
+                                socket.write_all(response.bytes().as_slice()).await.unwrap();
+                            }
                         }
                     }
                     Some(outgoing_message) = client_rx.recv() => {
@@ -65,8 +69,7 @@ impl Client {
                             HubReponse::Message(message) => {
                                 let shutdown = matches!(message, Message::Response(Response::Shutdown));
 
-                                let bson = bson::to_raw_document_buf(&message).unwrap().into_bytes();
-                                socket.write_all(bson.as_slice()).await.unwrap();
+                                socket.write_all(message.bytes().as_slice()).await.unwrap();
 
                                 if shutdown {
                                     drop(socket);
@@ -92,6 +95,11 @@ impl Client {
     }
 
     pub async fn send_message(&mut self, service_name: &String, message: Message) {
+        debug!(
+            "Incoming response message for a service `{:?}`: {:?}",
+            service_name, message
+        );
+
         if let Err(err) = self.client_tx.send(HubReponse::Message(message)).await {
             error!(
                 "Failed to send message to the client `{}`: {}",
@@ -106,7 +114,13 @@ impl Client {
         counterparty_service_name: &String,
         fd: OsUnixStream,
     ) {
-        let message = Message::Response(Response::NewConnection(counterparty_service_name.clone()));
+        debug!(
+            "Incoming socket descriptor for a service `{:?}` from `{:?}`",
+            self.service_name(),
+            counterparty_service_name
+        );
+
+        let message = Response::NewConnection(counterparty_service_name.clone()).into();
 
         if let Err(err) = self.client_tx.send(HubReponse::Fd(message, fd)).await {
             error!(
@@ -117,50 +131,58 @@ impl Client {
         }
     }
 
-    pub async fn drop(&mut self, service_name: &String, reason: Response) {
-        self.send_message(service_name, reason.into()).await;
-        // client drops
-    }
+    async fn handle_client_message(&mut self, message: messages::Message) -> Option<Response> {
+        trace!(
+            "Incoming service `{:?}` message: {:?}",
+            self.service_name.read(),
+            message
+        );
 
-    async fn handle_client_message(&mut self, message: messages::Message) {
-        match message {
-            Message::ServiceRequest(ServiceRequest::Register {
-                protocol_version,
-                service_name,
-            }) => {
-                self.handle_registration_message(protocol_version, service_name)
-                    .await;
+        if let Message::ServiceRequest(request) = message {
+            match request {
+                ServiceRequest::Register {
+                    protocol_version,
+                    service_name,
+                } => {
+                    self.handle_registration_message(protocol_version, service_name)
+                        .await
+                }
+                ServiceRequest::Connect { service_name } => {
+                    self.handle_connect_message(service_name).await
+                }
             }
-            Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
-                self.handle_connect_message(service_name).await;
-            }
-            message => {
-                error!("Data message send to the hub: {:?}", message);
-            }
+        } else {
+            error!("Unexpected data message send to the hub: {:?}", message);
+            Some(Response::InvalidProtocol)
         }
     }
 
-    async fn handle_registration_message(&mut self, protocol_version: i64, service_name: String) {
+    async fn handle_registration_message(
+        &mut self,
+        protocol_version: i64,
+        service_name: String,
+    ) -> Option<Response> {
         if protocol_version != messages::PROTOCOL_VERSION {
             warn!("Client with invalid protocol: {}", self.uuid);
-            self.client_tx
-                .send(HubReponse::Message(Response::InvalidProtocol.into()))
-                .await
-                .unwrap();
-            return;
+            return Response::InvalidProtocol.into();
         }
 
         if !permissions::service_name_allowed(&"socket_addr".into(), &service_name) {
-            self.client_tx
-                .send(HubReponse::Message(Response::NotAllowed.into()))
-                .await
-                .unwrap();
-            return;
+            warn!(
+                "Client is not allowed to register with name `{:?}`",
+                service_name
+            );
+            return Response::NotAllowed.into();
         }
 
         // Service requested new service_name. We update our service name here.
         // In case we've failed to register service, we drop it anyway
         *(self.service_name.write()) = service_name.clone();
+        trace!(
+            "Assigned service name `{:?}` to a client with UUID {:?}",
+            self.service_name,
+            self.uuid
+        );
 
         self.hub_tx
             .send(ClientRequest {
@@ -174,17 +196,19 @@ impl Client {
             })
             .await
             .unwrap();
+
+        None
     }
 
-    async fn handle_connect_message(&mut self, service_name: String) {
+    async fn handle_connect_message(&mut self, service_name: String) -> Option<Response> {
         let self_service_name = self.service_name.read().clone();
 
         if !permissions::connection_allowed(&self_service_name, &service_name) {
-            self.client_tx
-                .send(HubReponse::Message(Response::NotAllowed.into()))
-                .await
-                .unwrap();
-            return;
+            warn!(
+                "Client `{:?}` is not allowed to connect with `{:?}`",
+                self_service_name, service_name
+            );
+            return Some(Response::NotAllowed.into());
         }
 
         self.hub_tx
@@ -195,5 +219,20 @@ impl Client {
             })
             .await
             .unwrap();
+
+        None
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        debug!(
+            "Shutting down service connection for `{:?}`",
+            self.service_name.read()
+        );
+
+        let _ = self
+            .client_tx
+            .blocking_send(HubReponse::Message(Response::Shutdown.into()));
     }
 }
