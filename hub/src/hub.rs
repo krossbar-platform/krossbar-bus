@@ -3,6 +3,7 @@ use std::os::unix::net::UnixStream as OsUnixStream;
 
 use common::errors::Error as BusError;
 use common::messages::{Message, Response, ServiceRequest};
+use common::HUB_SOCKET_PATH;
 use log::*;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
@@ -10,8 +11,6 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use uuid::Uuid;
 
 use super::client::Client;
-
-const SOCKET_PATH: &str = "/var/run/caro/bus.socket";
 
 #[derive(Debug)]
 pub struct ClientRequest {
@@ -42,11 +41,11 @@ impl Hub {
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match UnixListener::bind(SOCKET_PATH) {
+        match UnixListener::bind(HUB_SOCKET_PATH) {
             Ok(listener) => {
                 info!(
                     "Succesfully started listening for incoming connections at: {}",
-                    SOCKET_PATH
+                    HUB_SOCKET_PATH
                 );
 
                 loop {
@@ -71,7 +70,7 @@ impl Hub {
             Err(err) => {
                 error!(
                     "Failed to start listening at: {}. Another hub instance is running?",
-                    SOCKET_PATH
+                    HUB_SOCKET_PATH
                 );
                 return Err(Box::new(err));
             }

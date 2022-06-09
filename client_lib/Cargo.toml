@@ -6,3 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bson = "2.3"
+bytes = "1.1"
+# TODO: Limit fetures
+tokio = { version = "1.19", features = ["full"] }
+parking_lot = "0.12"
+log = "0.4"
+sendfd = { version = "0.4", features = ["tokio"] }
+
+common = { path = "../common" }
