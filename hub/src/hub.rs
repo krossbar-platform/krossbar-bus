@@ -177,13 +177,13 @@ impl Hub {
 
             // Send descriptor to the requester
             self.client(&client_service_name)
-                .send_new_connection_descriptor(&target_service_name, left)
+                .send_connection_fd(&target_service_name, left)
                 .await;
         }
 
         // Send descriptor to the target service
         self.client(&target_service_name)
-            .send_new_connection_descriptor(&client_service_name, right)
+            .send_connection_fd(&client_service_name, right)
             .await;
 
         info!(

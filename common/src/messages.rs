@@ -28,7 +28,6 @@ impl Into<Message> for ServiceRequest {
 pub enum Response {
     Ok,
     Shutdown,
-    NewConnection(String),
     Error(errors::Error),
 }
 

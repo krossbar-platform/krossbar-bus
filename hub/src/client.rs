@@ -2,11 +2,10 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream as OsUnixStream;
 use std::sync::Arc;
 
-use bson;
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
-use sendfd::SendWithFd;
+use passfd::FdPassingExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::select;
@@ -58,7 +57,13 @@ impl Client {
 
             loop {
                 select! {
-                    _ = socket.read_buf(&mut bytes) => {
+                    read_result = socket.read_buf(&mut bytes) => {
+                        if let Err(err) = read_result {
+                            error!("Failed to read from a socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                            drop(socket);
+                            return
+                        }
+
                         if let Some(message) = messages::parse_buffer(&mut bytes) {
                             if let Some(response) = this.handle_client_message(message).await {
                                 socket.write_all(response.bytes().as_slice()).await.unwrap();
@@ -70,7 +75,11 @@ impl Client {
                             HubReponse::Message(message) => {
                                 let shutdown = matches!(message, Message::Response(Response::Shutdown));
 
-                                socket.write_all(message.bytes().as_slice()).await.unwrap();
+                                if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
+                                    error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                                    drop(socket);
+                                    return
+                                }
 
                                 if shutdown {
                                     drop(socket);
@@ -78,10 +87,25 @@ impl Client {
                                 }
                             },
                             HubReponse::Fd(message, fd) => {
-                                let bson = bson::to_raw_document_buf(&message).unwrap().into_bytes();
-                                let fds = vec![fd.as_raw_fd()];
+                                // With new connections we have two responses:
+                                // 1. Response::Error, which we receive as a return value from message handle
+                                // 2. Reponse::Ok, and socket fd right after, which is handled here
 
-                                if let Err(err) = socket.send_with_fd(bson.as_slice(), fds.as_slice()) {
+                                // Send Ok message, so our client starts listening to the incoming fd
+                                if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
+                                    error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                                    drop(socket);
+                                    return
+                                }
+
+                                // And the descriptor itself. To minimize blocking wait until socket is ready to send
+                                if let Err(err) = socket.writable().await {
+                                    error!("Failed to wait for writable socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                                    drop(socket);
+                                    return
+                                }
+
+                                if let Err(err) = socket.as_raw_fd().send_fd(fd.as_raw_fd()) {
                                     error!("Failed to send fd to the service `{:?}`: {}", this.service_name(), err.to_string());
                                 }
                             }
@@ -110,7 +134,7 @@ impl Client {
         }
     }
 
-    pub async fn send_new_connection_descriptor(
+    pub async fn send_connection_fd(
         &mut self,
         counterparty_service_name: &String,
         fd: OsUnixStream,
@@ -121,7 +145,7 @@ impl Client {
             counterparty_service_name
         );
 
-        let message = Response::NewConnection(counterparty_service_name.clone()).into();
+        let message = Response::Ok.into();
 
         if let Err(err) = self.client_tx.send(HubReponse::Fd(message, fd)).await {
             error!(
@@ -209,7 +233,7 @@ impl Client {
                 "Client `{:?}` is not allowed to connect with `{:?}`",
                 self_service_name, service_name
             );
-            return Some(Response::Error(BusError::InvalidProtocol).into());
+            return Some(Response::Error(BusError::NotAllowed).into());
         }
 
         self.hub_tx

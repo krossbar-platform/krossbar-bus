@@ -1,11 +1,9 @@
 use std::error::Error;
-use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixStream as OsStream;
-use std::os::unix::prelude::FromRawFd;
+use std::os::unix::prelude::{AsRawFd, FromRawFd};
 
-use bytes::BytesMut;
 use log::*;
-use sendfd::RecvWithFd;
+use passfd::FdPassingExt;
 use tokio::net::UnixStream;
 
 use super::connection::Connection;
@@ -59,30 +57,34 @@ impl BusClient {
         debug!("Connection to a service `{}`", service_name);
         let request = messages::make_connection_message(service_name.clone());
 
-        utils::send(&mut self.socket, request).await?;
-
-        //let mut buffer = [0u8; 1024];
-        let mut bytes = BytesMut::with_capacity(512);
-        let mut fd_buffer: [RawFd; 1] = [0];
-
-        match self.socket.recv_with_fd(&mut bytes, &mut fd_buffer) {
-            Ok((n, fd_size)) => {
-                /*match common::messages::parse_buffer(bytes) {
-                    Some(message) => {
-
-                    }
-                }*/
-
+        match utils::send_receive(&mut self.socket, request).await {
+            Ok(Message::Response(Response::Ok)) => {
                 info!(
                     "Succesfully connected service `{}` to `{}`",
                     self.service_name, service_name
                 );
+                // Client can receive two types of responses for a connection request:
+                // 1. Response::Error if servic eis not allowed to connect
+                // 2. Response::Ok and fd right after it if the hub allows the connection
+                // We handle second option here
 
-                let os_stream = unsafe { OsStream::from_raw_fd(fd_buffer[0]) };
+                let fd = self.socket.as_raw_fd().recv_fd()?;
+                let os_stream = unsafe { OsStream::from_raw_fd(fd) };
                 let socket = UnixStream::from_std(os_stream).unwrap();
                 Ok(Connection::new(service_name, socket))
             }
-            Err(err) => Err(Box::new(err)),
+            Ok(Message::Response(Response::Error(err))) => {
+                warn!(
+                    "Failed to register service as `{}`: {}",
+                    self.service_name, err
+                );
+                Err(Box::new(err))
+            }
+            Ok(m) => {
+                error!("Invalid response from the hub: {:?}", m);
+                Err(Box::new(BusError::InvalidProtocol))
+            }
+            Err(err) => Err(err),
         }
     }
 }
