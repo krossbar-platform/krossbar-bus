@@ -1,12 +1,16 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::os::unix::net::UnixStream as OsStream;
 use std::os::unix::prelude::{AsRawFd, FromRawFd};
 
 use log::*;
 use passfd::FdPassingExt;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use tokio::net::UnixStream;
 
 use super::connection::Connection;
+use super::method::{Method, MethodTrait};
 use super::utils;
 use common::errors::Error as BusError;
 use common::messages::{self, Message, Response};
@@ -15,6 +19,7 @@ use common::HUB_SOCKET_PATH;
 pub struct BusClient {
     service_name: String,
     socket: UnixStream,
+    methods: HashMap<String, Box<dyn MethodTrait>>,
 }
 
 impl BusClient {
@@ -26,6 +31,7 @@ impl BusClient {
         Ok(Self {
             service_name,
             socket,
+            methods: HashMap::new(),
         })
     }
 
@@ -86,5 +92,12 @@ impl BusClient {
             }
             Err(err) => Err(err),
         }
+    }
+
+    pub async fn register_method<ParamsType, ResponseType>(_method_name: &str) -> ()
+    where
+        ParamsType: DeserializeOwned,
+        ResponseType: Serialize,
+    {
     }
 }

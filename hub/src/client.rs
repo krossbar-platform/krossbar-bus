@@ -71,46 +71,11 @@ impl Client {
                         }
                     }
                     Some(outgoing_message) = client_rx.recv() => {
-                        match outgoing_message {
-                            HubReponse::Message(message) => {
-                                let shutdown = matches!(message, Message::Response(Response::Shutdown));
-
-                                if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
-                                    error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
-                                    drop(socket);
-                                    return
-                                }
-
-                                if shutdown {
-                                    drop(socket);
-                                    return
-                                }
-                            },
-                            HubReponse::Fd(message, fd) => {
-                                // With new connections we have two responses:
-                                // 1. Response::Error, which we receive as a return value from message handle
-                                // 2. Reponse::Ok, and socket fd right after, which is handled here
-
-                                // Send Ok message, so our client starts listening to the incoming fd
-                                if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
-                                    error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
-                                    drop(socket);
-                                    return
-                                }
-
-                                // And the descriptor itself. To minimize blocking wait until socket is ready to send
-                                if let Err(err) = socket.writable().await {
-                                    error!("Failed to wait for writable socket: {}. Client is disconnected. Shutting him down", err.to_string());
-                                    drop(socket);
-                                    return
-                                }
-
-                                if let Err(err) = socket.as_raw_fd().send_fd(fd.as_raw_fd()) {
-                                    error!("Failed to send fd to the service `{:?}`: {}", this.service_name(), err.to_string());
-                                }
-                            }
+                        // If Err(_) returned, service either closed connection, or we want to close it ourselves
+                        if let Err(_) = this.write_response_message(&mut socket, outgoing_message).await {
+                            drop(socket);
+                            return;
                         }
-
                     }
                 }
             }
@@ -154,6 +119,58 @@ impl Client {
                 err.to_string()
             );
         }
+    }
+
+    async fn write_response_message(
+        &mut self,
+        socket: &mut UnixStream,
+        outgoing_message: HubReponse,
+    ) -> std::io::Result<()> {
+        match outgoing_message {
+            HubReponse::Message(message) => {
+                let shutdown = matches!(message, Message::Response(Response::Shutdown));
+
+                if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
+                    error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                    return Err(err);
+                }
+
+                // Returning error here will drop connection
+                if shutdown {
+                    return Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, ""));
+                }
+            }
+            HubReponse::Fd(message, fd) => {
+                // With new connections we have two responses:
+                // 1. Response::Error, which we receive as a return value from message handle
+                // 2. Reponse::Ok, and socket fd right after, which is handled here
+
+                // Send Ok message, so our client starts listening to the incoming fd
+                if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
+                    error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                    drop(socket);
+                    return Err(err);
+                }
+
+                // And the descriptor itself. To minimize blocking wait until socket is ready to send
+                if let Err(err) = socket.writable().await {
+                    error!("Failed to wait for writable socket: {}. Client is disconnected. Shutting him down", err.to_string());
+                    drop(socket);
+                    return Err(err);
+                }
+
+                if let Err(err) = socket.as_raw_fd().send_fd(fd.as_raw_fd()) {
+                    error!(
+                        "Failed to send fd to the service `{:?}`: {}",
+                        self.service_name(),
+                        err.to_string()
+                    );
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn handle_client_message(&mut self, message: messages::Message) -> Option<Response> {

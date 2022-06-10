@@ -1,4 +1,4 @@
-use bson;
+use bson::{self, Bson};
 use bytes::{Buf, BytesMut};
 use log::*;
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,7 @@ impl Into<Message> for ServiceRequest {
 pub enum Response {
     Ok,
     Shutdown,
+    Return(Bson),
     Error(errors::Error),
 }
 
@@ -48,7 +49,8 @@ impl Response {
 pub enum Message {
     ServiceRequest(ServiceRequest),
     Response(Response),
-    DataMessage(i64),
+    MethodCall { method_name: String, params: Bson },
+    MethodSubscription { method_name: String },
 }
 
 impl Message {
@@ -68,8 +70,17 @@ pub fn make_connection_message(service_name: String) -> Message {
     Message::ServiceRequest(ServiceRequest::Connect { service_name })
 }
 
-pub fn make_data_message() -> Message {
-    Message::DataMessage(42)
+pub fn make_call_message<T: Serialize>(method_name: &str, data: &T) -> Message {
+    Message::MethodCall {
+        method_name: String::from(method_name),
+        params: bson::to_bson(&data).unwrap(),
+    }
+}
+
+pub fn make_subscription_message(method_name: &str) -> Message {
+    Message::MethodSubscription {
+        method_name: String::from(method_name),
+    }
 }
 
 pub fn parse_buffer(buffer: &mut BytesMut) -> Option<Message> {
