@@ -14,5 +14,6 @@ parking_lot = "0.12"
 log = "0.4"
 passfd = "0.1.4"
 serde = "1.0"
+async-trait = "0.1"
 
 common = { path = "../common" }

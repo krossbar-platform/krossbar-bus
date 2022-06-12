@@ -9,6 +9,10 @@ pub enum Error {
     NotFound,
     #[error("Service with this name is already registered")]
     NameRegistered,
+    #[error("Method already registered")]
+    MethodCallError(String),
+    #[error("Method not registered")]
+    MethodRegistered,
     #[error("Invalid protocol version. Please update Caro dependencies")]
     InvalidProtocol,
     #[error("Invalid parameters passed into a function")]

@@ -6,7 +6,10 @@ use tokio::net::UnixStream;
 
 use common::messages::{self, Message};
 
-pub async fn send(socket: &mut UnixStream, message: Message) -> Result<(), Box<dyn Error>> {
+pub async fn send(
+    socket: &mut UnixStream,
+    message: Message,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let data = message.bytes();
 
     match socket.write_all(&data).await {
@@ -18,7 +21,7 @@ pub async fn send(socket: &mut UnixStream, message: Message) -> Result<(), Box<d
 pub async fn send_receive(
     socket: &mut UnixStream,
     message: Message,
-) -> Result<Message, Box<dyn Error>> {
+) -> Result<Message, Box<dyn Error + Send + Sync>> {
     send(socket, message).await?;
 
     let mut bytes = BytesMut::with_capacity(64);

@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fmt::Debug;
 
 use log::*;
 use serde::de::DeserializeOwned;
@@ -30,7 +31,7 @@ impl Connection {
         &mut self,
         method_name: &str,
         params: &ParamsType,
-    ) -> Result<ResponseType, Box<dyn Error>> {
+    ) -> Result<ResponseType, Box<dyn Error + Sync + Send>> {
         let message = messages::make_call_message(method_name, params);
 
         let response = utils::send_receive(&mut self.socket, message).await?;
@@ -59,5 +60,11 @@ impl Connection {
                 Err(Box::new(BusError::InvalidProtocol))
             }
         }
+    }
+}
+
+impl Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Connection to {}", self.connection_service_name)
     }
 }
