@@ -1,10 +1,14 @@
 use std::error::Error;
 
 use bytes::BytesMut;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot::{self, Sender as OneSender};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+    sync::{
+        mpsc::Sender,
+        oneshot::{self, Sender as OneSender},
+    },
+};
 
 use common::messages::{self, Message};
 
@@ -21,7 +25,7 @@ pub async fn send_message(
     }
 }
 
-/// Send message into a socket and wait for a result
+/// Send message into a socket and wait for the result
 pub async fn send_receive_message(
     socket: &mut UnixStream,
     message: Message,
@@ -41,7 +45,7 @@ pub async fn send_receive_message(
     }
 }
 
-/// Sends message request into mpsc channel and waits for the result
+/// Send message request into mpsc channel and wait for the result
 pub async fn call_task(
     task_tx: &Sender<(
         Message,

@@ -28,6 +28,7 @@ impl Into<Message> for ServiceRequest {
 pub enum Response {
     Ok,
     Shutdown,
+    IncomingClientFd(String),
     Return(Bson),
     Error(errors::Error),
 }

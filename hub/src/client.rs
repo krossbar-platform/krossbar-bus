@@ -105,12 +105,12 @@ impl Client {
         fd: OsUnixStream,
     ) {
         debug!(
-            "Incoming socket descriptor for a service `{:?}` from `{:?}`",
+            "Incoming socket descriptor for a service `{}` from `{:?}`",
             self.service_name(),
             counterparty_service_name
         );
 
-        let message = Response::Ok.into();
+        let message = Response::IncomingClientFd(counterparty_service_name.clone()).into();
 
         if let Err(err) = self.client_tx.send(HubReponse::Fd(message, fd)).await {
             error!(

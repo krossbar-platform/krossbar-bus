@@ -1,42 +1,50 @@
-use std::error::Error;
-use std::fmt::Debug;
-use std::sync::Arc;
+use std::{error::Error, fmt::Debug, sync::Arc};
 
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
-use tokio::sync::mpsc::{self, Sender};
-use tokio::sync::oneshot::Sender as OneSender;
+use serde::{de::DeserializeOwned, Serialize};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+    sync::{
+        mpsc::{self, Sender},
+        oneshot::Sender as OneSender,
+    },
+};
 
 use super::utils;
-use common::errors::Error as BusError;
-use common::messages::{self, Message, Response};
+use common::{
+    errors::Error as BusError,
+    messages::{self, Message, Response},
+};
 
 type Shared<T> = Arc<RwLock<T>>;
 type CallbackType = Result<Message, Box<dyn Error + Send + Sync>>;
 
+/// P2p service connection handle
 #[derive(Clone)]
 pub struct ServiceConnection {
-    connection_service_name: Shared<String>,
-    service_tx: Sender<(Message, OneSender<CallbackType>)>,
+    /// Peer service name
+    peer_service_name: Shared<String>,
+    /// Bus connection tx to send incoming messages from the peer
+    bus_connection_tx: Sender<(Message, OneSender<CallbackType>)>,
+    /// Sender to make calls into the task
     task_tx: Sender<(Message, OneSender<CallbackType>)>,
 }
 
 impl ServiceConnection {
+    /// Create new service handle and start tokio task to handle incoming messages from the peer
     pub fn new(
-        connection_service_name: String,
+        peer_service_name: String,
         mut socket: UnixStream,
-        service_tx: Sender<(Message, OneSender<CallbackType>)>,
+        bus_connection_tx: Sender<(Message, OneSender<CallbackType>)>,
     ) -> Self {
         let (task_tx, mut rx) = mpsc::channel(32);
 
         let mut this = Self {
-            connection_service_name: Arc::new(RwLock::new(connection_service_name)),
-            service_tx,
+            peer_service_name: Arc::new(RwLock::new(peer_service_name)),
+            bus_connection_tx,
             task_tx,
         };
         let result = this.clone();
@@ -46,6 +54,7 @@ impl ServiceConnection {
 
             loop {
                 tokio::select! {
+                    // Read incoming message from the peer
                     read_result = socket.read_buf(&mut bytes) => {
                         if let Err(err) = read_result {
                             error!("Failed to read from a socket: {}. Hub is down", err.to_string());
@@ -54,10 +63,11 @@ impl ServiceConnection {
                         }
 
                         if let Some(message) = messages::parse_buffer(&mut bytes) {
-                            let response = this.handle_client_message(message).await;
+                            let response = this.handle_peer_message(message).await;
                             socket.write_all(response.bytes().as_slice()).await.unwrap();
                         }
                     },
+                    // Handle method calls
                     Some((request, callback_tx)) = rx.recv() => {
                         match request {
                             Message::MethodCall{..} => {
@@ -73,6 +83,7 @@ impl ServiceConnection {
         result
     }
 
+    /// Remote method call
     pub async fn call<'de, ParamsType: Serialize, ResponseType: DeserializeOwned>(
         &mut self,
         method_name: &str,
@@ -80,9 +91,11 @@ impl ServiceConnection {
     ) -> Result<ResponseType, Box<dyn Error + Sync + Send>> {
         let message = messages::make_call_message(method_name, params);
 
+        // Send method call request
         let response = utils::call_task(&self.task_tx, message).await;
 
         match response {
+            // Succesfully performed remote method call
             Ok(Message::Response(Response::Return(data))) => {
                 match bson::from_bson::<ResponseType>(data) {
                     Ok(data) => Ok(data),
@@ -92,19 +105,22 @@ impl ServiceConnection {
                     }
                 }
             }
+            // Got an error from the peer
             Ok(Message::Response(Response::Error(err))) => {
                 warn!(
                     "Failed to perform a call to `{}::{}`: {}",
-                    self.connection_service_name.read(),
+                    self.peer_service_name.read(),
                     method_name,
                     err.to_string()
                 );
                 Err(Box::new(err))
             }
+            // Invalid protocol
             Ok(r) => {
                 error!("Invalid Ok response for a method call: {:?}", r);
                 Err(Box::new(BusError::InvalidProtocol))
             }
+            // Network error
             Err(e) => {
                 error!("Ivalid error response from a method call: {:?}", e);
                 Err(e)
@@ -112,11 +128,11 @@ impl ServiceConnection {
         }
     }
 
-    /// Handle incoming message from the bus
-    async fn handle_client_message(&mut self, message: messages::Message) -> Message {
+    /// Handle messages from the peer
+    async fn handle_peer_message(&mut self, message: messages::Message) -> Message {
         trace!("Incoming client message: {:?}", message);
 
-        if let Ok(response) = utils::call_task(&self.service_tx, message).await {
+        if let Ok(response) = utils::call_task(&self.bus_connection_tx, message).await {
             response
         } else {
             BusError::Internal.into()
@@ -126,6 +142,6 @@ impl ServiceConnection {
 
 impl Debug for ServiceConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Connection to {}", self.connection_service_name.read())
+        write!(f, "Connection to {}", self.peer_service_name.read())
     }
 }

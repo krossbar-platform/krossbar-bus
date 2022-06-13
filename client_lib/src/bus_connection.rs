@@ -1,48 +1,66 @@
-use std::collections::HashMap;
-use std::error::Error;
-use std::os::unix::net::UnixStream as OsStream;
-use std::os::unix::prelude::{AsRawFd, FromRawFd};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    error::Error,
+    os::unix::{
+        net::UnixStream as OsStream,
+        prelude::{AsRawFd, FromRawFd},
+    },
+    sync::Arc,
+};
 
 use bson::Bson;
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
 use passfd::FdPassingExt;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::oneshot::Sender as OneSender;
-use tokio::sync::Mutex as AsyncMutex;
+use serde::{de::DeserializeOwned, Serialize};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        oneshot::Sender as OneSender,
+        Mutex as AsyncMutex,
+    },
+};
 
-use super::method::{Method, MethodCall, MethodTrait};
-use super::service_connection::ServiceConnection;
-use super::utils;
-use common::errors::Error as BusError;
-use common::messages::{self, Message, Response, ServiceRequest};
-use common::HUB_SOCKET_PATH;
+use super::{
+    method::{Method, MethodCall, MethodTrait},
+    service_connection::ServiceConnection,
+    utils,
+};
+use common::{
+    errors::Error as BusError,
+    messages::{self, Message, Response, ServiceRequest},
+    HUB_SOCKET_PATH,
+};
 
 type Shared<T> = Arc<RwLock<T>>;
 type CallbackType = Result<Message, Box<dyn Error + Send + Sync>>;
 
+/// Bus connection handle. Associated with a service name on the hub.
+/// Used to connect to other services
+/// and register methods, signals, and states
 #[derive(Clone)]
 pub struct BusConnection {
+    /// Own service name
     service_name: Shared<String>,
+    /// Connected services. All these connections are p2p
     connected_services: Shared<HashMap<String, ServiceConnection>>,
+    /// Registered methods
     methods: Shared<HashMap<String, Arc<AsyncMutex<dyn MethodTrait>>>>,
     /// Sender to make calls into the task
     task_tx: Sender<(Message, OneSender<CallbackType>)>,
 }
 
 impl BusConnection {
-    /// Register service. Tries to register at the hub. Method may fail registering
-    /// if the executable is not allowed to register with a given service name, or
-    /// Service name is already registered
+    /// Register service. Tries to register the service at the hub. The method may fail registering
+    /// if the executable is not allowed to register with the given service name, or
+    /// service name is already taken
     pub async fn register(service_name: String) -> Result<Self, Box<dyn Error>> {
         debug!("Registering service `{}`", service_name);
 
+        // First connect to a socket
         let mut socket = UnixStream::connect(HUB_SOCKET_PATH).await?;
 
         let request = messages::make_register_message(service_name.clone());
@@ -55,6 +73,7 @@ impl BusConnection {
             task_tx,
         };
 
+        // Send connection request and wait for a response
         match utils::send_receive_message(&mut socket, request).await {
             Ok(Message::Response(Response::Ok)) => {
                 info!(
@@ -77,37 +96,40 @@ impl BusConnection {
             Err(err) => return Err(err),
         }
 
+        // Start tokio task to handle incoming messages
         this.start(socket, rx);
 
         Ok(this)
     }
 
     /// Connect to a service. This call is asynchronous and may fail.
-    /// See perfom_service_connection fro actual connection sequence
+    /// See perfom_service_connection for connection sequence
     pub async fn connect(
         &mut self,
         service_name: String,
     ) -> Result<ServiceConnection, Box<dyn Error + Send + Sync>> {
         debug!("Connecting to a service `{}`", service_name);
+        let services = self.connected_services.read();
 
-        utils::call_task(
-            &self.task_tx,
-            ServiceRequest::Connect {
-                service_name: service_name.clone(),
-            }
-            .into(),
-        )
-        .await
-        .map(|_| {
-            self.connected_services
-                .read()
-                .get(&service_name)
-                .cloned()
-                .unwrap()
-        })
+        // We may have already connected peer. So first we check if connected
+        // and if not, perform connection request
+        if !services.contains_key(&service_name) {
+            let _ = utils::call_task(
+                &self.task_tx,
+                ServiceRequest::Connect {
+                    service_name: service_name.clone(),
+                }
+                .into(),
+            )
+            .await?;
+        }
+
+        // We either already had connection, or just created one, so we can
+        // return existed connection handle
+        Ok(services.get(&service_name).cloned().unwrap())
     }
 
-    /// Register service method
+    /// Register service method. Returns a Future, which cna be waited for method calls
     /// P: Paramters type. Should be Send + Sync + DeserializeOwned
     /// R: Response type. Should be Send + Sync + Serialize
     pub async fn register_method<P, R>(
@@ -118,6 +140,8 @@ impl BusConnection {
         P: DeserializeOwned + Sync + Send + 'static,
         R: Serialize + Sync + Send + 'static,
     {
+        // The function just creates a method handle, which performs type conversions
+        // for incoming data and client replies. See [Method] for details
         let mut methods = self.methods.write();
 
         if methods.contains_key(method_name) {
@@ -148,6 +172,7 @@ impl BusConnection {
 
             loop {
                 tokio::select! {
+                    // Read incoming message from the hub
                     read_result = socket.read_buf(&mut bytes) => {
                         if let Err(err) = read_result {
                             error!("Failed to read from a socket: {}. Hub is down", err.to_string());
@@ -161,6 +186,7 @@ impl BusConnection {
                             }
                         }
                     },
+                    // Handle service requests and method calls
                     Some((request, callback)) = rx.recv()  => {
                         match request {
                             Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
@@ -191,35 +217,43 @@ impl BusConnection {
         }
         .into();
 
+        // Send connection message and receive response
         match utils::send_receive_message(socket, request).await {
-            Ok(Message::Response(Response::Ok)) => {
+            // Client can receive two types of responses for a connection request:
+            // 1. Response::Error if service is not allowed to connect
+            // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
+            // Handle second case next
+            Ok(Message::Response(Response::IncomingClientFd(_))) => {
                 info!(
                     "Succesfully connected service `{}` to `{}`",
                     self.service_name.read(),
                     target_service_name
                 );
-                // Client can receive two types of responses for a connection request:
-                // 1. Response::Error if servic eis not allowed to connect
-                // 2. Response::Ok and fd right after it if the hub allows the connection
-                // We handle second option here
 
                 let fd = socket.as_raw_fd().recv_fd()?;
                 let os_stream = unsafe { OsStream::from_raw_fd(fd) };
                 let socket = UnixStream::from_std(os_stream).unwrap();
 
+                // Create new service connection handle. Can be used to handle own
+                // connection requests by just returning already existing handle
                 let new_service_connection = ServiceConnection::new(
                     target_service_name.clone(),
                     socket,
                     self.task_tx.clone(),
                 );
 
+                // Place the handle into the map of existing connections.
+                // Caller will use the map to return the handle to the client.
+                // See [connect] for the details
                 self.connected_services
                     .write()
                     .insert(target_service_name, new_service_connection);
 
                 Ok(Message::Response(Response::Ok))
             }
+            // Hub doesn't allow connection
             Ok(Message::Response(Response::Error(err))) => {
+                // This is an invalid
                 warn!(
                     "Failed to register service as `{}`: {}",
                     self.service_name.read(),
@@ -227,15 +261,17 @@ impl BusConnection {
                 );
                 Err(Box::new(err))
             }
+            // Invalid protocol here
             Ok(m) => {
                 error!("Invalid response from the hub: {:?}", m);
                 Err(Box::new(BusError::InvalidProtocol))
             }
+            // Network error
+            // TODO: Close client connection
             Err(err) => Err(err),
         }
     }
 
-    // TODO: Rework for Bson to be consistent?
     /// Handle incoming method call
     async fn handle_method_call(&self, method_name: String, params: Bson) -> Message {
         let method = self.methods.read().get(&method_name).cloned();
@@ -257,20 +293,23 @@ impl BusConnection {
     ) -> Option<Response> {
         trace!("Incoming bus message: {:?}", message);
 
-        if let Message::ServiceRequest(request) = message {
+        if let Message::Response(request) = message {
             match request {
                 // Incoming connection request. Connection socket FD will be coming next
-                // So we first read socket, and that create a client handle
-                ServiceRequest::Connect { service_name } => {
+                Response::IncomingClientFd(service_name) => {
+                    // Read socket handle for p2p connection
                     let fd = socket.as_raw_fd().recv_fd().unwrap();
                     let os_stream = unsafe { OsStream::from_raw_fd(fd) };
                     let incoming_socket = UnixStream::from_std(os_stream).unwrap();
 
+                    // Create a client handle
                     let new_client = ServiceConnection::new(
                         service_name.clone(),
                         incoming_socket,
                         self.task_tx.clone(),
                     );
+
+                    // Place the handle into the clients map
                     self.connected_services
                         .write()
                         .insert(service_name, new_client);
