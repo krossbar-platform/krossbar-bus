@@ -13,14 +13,13 @@ use tokio::{
     },
 };
 
-use super::utils;
+use super::{utils, CallbackType};
 use common::{
     errors::Error as BusError,
     messages::{self, Message, Response},
 };
 
 type Shared<T> = Arc<RwLock<T>>;
-type CallbackType = Result<Message, Box<dyn Error + Send + Sync>>;
 
 /// P2p service connection handle
 #[derive(Clone)]
@@ -84,11 +83,11 @@ impl ServiceConnection {
     }
 
     /// Remote method call
-    pub async fn call<'de, ParamsType: Serialize, ResponseType: DeserializeOwned>(
+    pub async fn call<P: Serialize, R: DeserializeOwned>(
         &mut self,
         method_name: &str,
-        params: &ParamsType,
-    ) -> Result<ResponseType, Box<dyn Error + Sync + Send>> {
+        params: &P,
+    ) -> Result<R, Box<dyn Error + Sync + Send>> {
         let message = messages::make_call_message(method_name, params);
 
         // Send method call request
@@ -96,15 +95,13 @@ impl ServiceConnection {
 
         match response {
             // Succesfully performed remote method call
-            Ok(Message::Response(Response::Return(data))) => {
-                match bson::from_bson::<ResponseType>(data) {
-                    Ok(data) => Ok(data),
-                    Err(err) => {
-                        error!("Can't deserialize method response: {}", err.to_string());
-                        Err(Box::new(BusError::InvalidResponse))
-                    }
+            Ok(Message::Response(Response::Return(data))) => match bson::from_bson::<R>(data) {
+                Ok(data) => Ok(data),
+                Err(err) => {
+                    error!("Can't deserialize method response: {}", err.to_string());
+                    Err(Box::new(BusError::InvalidResponse))
                 }
-            }
+            },
             // Got an error from the peer
             Ok(Message::Response(Response::Error(err))) => {
                 warn!(

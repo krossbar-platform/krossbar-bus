@@ -1,13 +1,15 @@
-use std::collections::HashMap;
-use std::os::unix::net::UnixStream as OsUnixStream;
+use std::{collections::HashMap, os::unix::net::UnixStream as OsUnixStream};
 
-use common::errors::Error as BusError;
-use common::messages::{Message, Response, ServiceRequest};
-use common::HUB_SOCKET_PATH;
+use common::{
+    errors::Error as BusError,
+    messages::{Message, Response, ServiceRequest},
+    HUB_SOCKET_PATH,
+};
 use log::*;
-use tokio::net::{UnixListener, UnixStream};
-use tokio::select;
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::{
+    net::{UnixListener, UnixStream},
+    sync::mpsc::{self, Receiver, Sender},
+};
 use uuid::Uuid;
 
 use super::client::Client;
@@ -49,7 +51,7 @@ impl Hub {
                 );
 
                 loop {
-                    select! {
+                    tokio::select! {
                         Ok((socket, address)) = listener.accept() => {
                             info!("New connection from a binary {:?}", address.as_pathname());
 

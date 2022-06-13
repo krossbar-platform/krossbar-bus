@@ -27,7 +27,7 @@ use tokio::{
 use super::{
     method::{Method, MethodCall, MethodTrait},
     service_connection::ServiceConnection,
-    utils,
+    utils, CallbackType,
 };
 use common::{
     errors::Error as BusError,
@@ -36,7 +36,6 @@ use common::{
 };
 
 type Shared<T> = Arc<RwLock<T>>;
-type CallbackType = Result<Message, Box<dyn Error + Send + Sync>>;
 
 /// Bus connection handle. Associated with a service name on the hub.
 /// Used to connect to other services
@@ -106,27 +105,28 @@ impl BusConnection {
     /// See perfom_service_connection for connection sequence
     pub async fn connect(
         &mut self,
-        service_name: String,
-    ) -> Result<ServiceConnection, Box<dyn Error + Send + Sync>> {
-        debug!("Connecting to a service `{}`", service_name);
+        peer_service_name: String,
+    ) -> Result<ServiceConnection, Box<dyn Error>> {
+        debug!("Connecting to a service `{}`", peer_service_name);
         let services = self.connected_services.read();
 
         // We may have already connected peer. So first we check if connected
         // and if not, perform connection request
-        if !services.contains_key(&service_name) {
+        if !services.contains_key(&peer_service_name) {
             let _ = utils::call_task(
                 &self.task_tx,
                 ServiceRequest::Connect {
-                    service_name: service_name.clone(),
+                    service_name: peer_service_name.clone(),
                 }
                 .into(),
             )
-            .await?;
+            .await
+            .map_err(|e| e as Box<dyn Error>)?;
         }
 
         // We either already had connection, or just created one, so we can
         // return existed connection handle
-        Ok(services.get(&service_name).cloned().unwrap())
+        Ok(services.get(&peer_service_name).cloned().unwrap())
     }
 
     /// Register service method. Returns a Future, which cna be waited for method calls

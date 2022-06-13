@@ -3,8 +3,7 @@ mod hub;
 mod permissions;
 
 use log::{LevelFilter, *};
-use tokio::signal;
-use tokio::{select, sync::mpsc};
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,8 +17,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut hub = hub::Hub::new(shutwon_rx);
 
-    let result = select! {
-        _ = signal::ctrl_c() => {
+    let result = tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
             let _ = shutdown_tx.send(()).await;
             Ok(())
         }

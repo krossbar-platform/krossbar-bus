@@ -1,21 +1,25 @@
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::UnixStream as OsUnixStream;
-use std::sync::Arc;
+use std::{
+    os::unix::{io::AsRawFd, net::UnixStream as OsUnixStream},
+    sync::Arc,
+};
 
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
 use passfd::FdPassingExt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
-use tokio::select;
-use tokio::sync::mpsc::{self, Sender};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+    sync::mpsc::{self, Sender},
+};
 use uuid::Uuid;
 
 use super::hub::ClientRequest;
 use super::permissions;
-use common::errors::Error as BusError;
-use common::messages::{self, Message, Response, ServiceRequest};
+use common::{
+    errors::Error as BusError,
+    messages::{self, Message, Response, ServiceRequest},
+};
 
 type Shared<T> = Arc<RwLock<T>>;
 
@@ -56,7 +60,7 @@ impl Client {
             let mut bytes = BytesMut::with_capacity(64);
 
             loop {
-                select! {
+                tokio::select! {
                     read_result = socket.read_buf(&mut bytes) => {
                         if let Err(err) = read_result {
                             error!("Failed to read from a socket: {}. Client is disconnected. Shutting him down", err.to_string());
