@@ -1,7 +1,7 @@
-pub mod client;
-pub mod connection;
+pub mod bus_connection;
 mod method;
+pub mod service_connection;
 mod utils;
 
-pub use client::BusClient;
+pub use bus_connection::BusConnection;
 pub use common::errors::Error;

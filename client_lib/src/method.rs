@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use async_trait::async_trait;
-use bson::{self, raw::RawDocumentBuf, Bson};
+use bson::Bson;
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -10,12 +10,24 @@ use tokio::sync::oneshot::{self, Sender as OneSender};
 
 #[async_trait]
 pub trait MethodTrait: Send + Sync {
-    async fn notify(&mut self, parameters: Bson) -> Result<RawDocumentBuf, Box<dyn Error>>;
+    async fn notify(&self, parameters: Bson) -> Result<Bson, Box<dyn Error>>;
 }
 
 pub struct MethodCall<P: Send + Sync + DeserializeOwned, R: Send + Sync + Serialize> {
     params: P,
     reply: OneSender<R>,
+}
+
+impl<P: Send + Sync + DeserializeOwned, R: Send + Sync + Serialize> MethodCall<P, R> {
+    pub fn params(&self) -> &P {
+        &self.params
+    }
+
+    pub async fn reply(self, response: R) {
+        if let Err(_) = self.reply.send(response) {
+            error!("Failed to send method call reply");
+        }
+    }
 }
 
 pub struct Method<P: Send + Sync + DeserializeOwned, R: Send + Sync + Serialize> {
@@ -32,7 +44,7 @@ impl<P: Send + Sync + DeserializeOwned, R: Send + Sync + Serialize> Method<P, R>
 
 #[async_trait]
 impl<P: Send + Sync + DeserializeOwned, R: Send + Sync + Serialize> MethodTrait for Method<P, R> {
-    async fn notify(&mut self, parameters: Bson) -> Result<RawDocumentBuf, Box<dyn Error>> {
+    async fn notify(&self, parameters: Bson) -> Result<Bson, Box<dyn Error>> {
         let (reply, rx) = oneshot::channel();
 
         match bson::from_bson::<P>(parameters) {
@@ -40,8 +52,7 @@ impl<P: Send + Sync + DeserializeOwned, R: Send + Sync + Serialize> MethodTrait 
                 let _ = self.callback_send.send(MethodCall { params, reply }).await;
 
                 let response = rx.await.map_err(|err| err.to_string())?;
-
-                Ok(bson::to_raw_document_buf(&response).unwrap())
+                bson::to_bson(&response).map_err(|e| e.into())
             }
             Err(err) => {
                 warn!(
