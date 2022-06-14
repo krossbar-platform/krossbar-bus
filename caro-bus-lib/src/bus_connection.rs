@@ -29,7 +29,7 @@ use super::{
     service_connection::ServiceConnection,
     utils, CallbackType,
 };
-use common::{
+use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, Message, Response, ServiceRequest},
     HUB_SOCKET_PATH,

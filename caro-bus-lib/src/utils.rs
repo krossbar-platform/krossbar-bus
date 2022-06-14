@@ -10,7 +10,7 @@ use tokio::{
     },
 };
 
-use common::messages::{self, Message};
+use caro_bus_common::messages::{self, Message};
 
 /// Send message into a socket
 pub async fn send_message(

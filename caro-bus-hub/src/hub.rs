@@ -1,6 +1,6 @@
 use std::{collections::HashMap, os::unix::net::UnixStream as OsUnixStream};
 
-use common::{
+use caro_bus_common::{
     errors::Error as BusError,
     messages::{Message, Response, ServiceRequest},
     HUB_SOCKET_PATH,

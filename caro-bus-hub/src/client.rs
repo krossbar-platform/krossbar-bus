@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::hub::ClientRequest;
 use super::permissions;
-use common::{
+use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, Message, Response, ServiceRequest},
 };

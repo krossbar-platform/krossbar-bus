@@ -1,3 +1,9 @@
 [workspace]
 
-members = ["hub", "monitor", "client_lib", "common", "caro-bus-connect"]
+members = [
+    "caro-bus-hub",
+    "caro-bus-monitor",
+    "caro-bus-lib",
+    "caro-bus-common",
+    "caro-bus-connect",
+]

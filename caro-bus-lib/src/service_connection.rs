@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use super::{utils, CallbackType};
-use common::{
+use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, Message, Response},
 };
