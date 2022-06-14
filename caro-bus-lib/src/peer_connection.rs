@@ -85,7 +85,7 @@ impl PeerConnection {
     /// Remote method call
     pub async fn call<P: Serialize, R: DeserializeOwned>(
         &mut self,
-        method_name: &str,
+        method_name: &String,
         params: &P,
     ) -> Result<R, Box<dyn Error + Sync + Send>> {
         let message = messages::make_call_message(method_name, params);
@@ -139,6 +139,6 @@ impl PeerConnection {
 
 impl Debug for PeerConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Connection to {}", self.peer_service_name.read())
+        write!(f, "Peer connection to {}", self.peer_service_name.read())
     }
 }

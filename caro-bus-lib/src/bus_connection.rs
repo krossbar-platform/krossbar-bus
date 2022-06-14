@@ -134,7 +134,7 @@ impl BusConnection {
     pub fn register_method<P, R>(
         &mut self,
         method_name: &String,
-        callback: Box<dyn Fn(&P) -> R + Send>,
+        callback: impl Fn(&P) -> R + Send + 'static,
     ) -> Result<(), Box<dyn Error>>
     where
         P: DeserializeOwned + 'static,
