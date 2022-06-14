@@ -1,4 +1,4 @@
-use std::{collections::HashMap, os::unix::net::UnixStream as OsUnixStream};
+use std::{collections::HashMap, fs, os::unix::net::UnixStream as OsUnixStream};
 
 use caro_bus_common::{
     errors::Error as BusError,
@@ -58,9 +58,9 @@ impl Hub {
                             self.handle_new_client(socket).await
                         },
                         Some(client_message) = self.hub_rx.recv() => {
-                            trace!("Incoming client message: {:?}", client_message);
+                            trace!("Incoming client call: {:?}", client_message);
 
-                            self.handle_client_message(client_message).await
+                            self.handle_client_call(client_message).await
                         }
                         _ = self.shutdown_rx.recv() => {
                             drop(listener);
@@ -92,7 +92,7 @@ impl Hub {
         self.anonymous_clients.insert(uuid.clone(), client);
     }
 
-    async fn handle_client_message(&mut self, request: ClientRequest) {
+    async fn handle_client_call(&mut self, request: ClientRequest) {
         if let Message::ServiceRequest(service_message) = request.message {
             match service_message {
                 ServiceRequest::Register {
@@ -117,7 +117,7 @@ impl Hub {
 
     async fn handle_client_registration(&mut self, uuid: Uuid, service_name: String) {
         trace!(
-            "Trying to assign service name `{:?}` to a client with uuid {:?}",
+            "Trying to assign service name `{}` to a client with uuid {}",
             service_name,
             uuid
         );
@@ -137,13 +137,21 @@ impl Hub {
                         )
                         .await;
                 } else {
+                    info!("Succesfully registered new client: `{}`", service_name);
+
+                    client
+                        .send_message(&service_name, Response::Ok.into())
+                        .await;
                     self.clients.insert(service_name, client);
                 }
             }
-            _ => error!(
-                "Failed to find a client `{}`, which tries to register",
-                uuid
-            ),
+            e => {
+                error!(
+                    "Failed to find a client `{}`, which tries to register. This should never happen",
+                    uuid
+                );
+                e.unwrap();
+            }
         }
     }
 
@@ -177,6 +185,21 @@ impl Hub {
                 return;
             }
 
+            if client_service_name == target_service_name {
+                warn!(
+                    "Service `{:?}` tries to connect to himself",
+                    target_service_name,
+                );
+
+                self.client(&client_service_name)
+                    .send_message(
+                        &target_service_name,
+                        Response::Error(BusError::NotAllowed).into(),
+                    )
+                    .await;
+                return;
+            }
+
             // Send descriptor to the requester
             self.client(&client_service_name)
                 .send_connection_fd(&target_service_name, left)
@@ -189,8 +212,16 @@ impl Hub {
             .await;
 
         info!(
-            "Connected a service `{:?}` to `{:?}`",
+            "Succesfully connected `{}` to `{}`",
             client_service_name, target_service_name
         )
+    }
+}
+
+impl Drop for Hub {
+    fn drop(&mut self) {
+        if let Err(err) = fs::remove_file(HUB_SOCKET_PATH) {
+            error!("Failed to remove hub socket file: {}", err);
+        }
     }
 }

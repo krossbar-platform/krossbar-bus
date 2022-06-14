@@ -10,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Starting Caro hub");
 
     pretty_env_logger::formatted_builder()
-        .filter_level(LevelFilter::Debug)
+        .filter_level(LevelFilter::Trace)
         .init();
 
     let (shutdown_tx, shutwon_rx) = mpsc::channel::<()>(1);

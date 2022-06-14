@@ -68,6 +68,17 @@ impl Client {
                             return
                         }
 
+                        let bytes_read = read_result.unwrap();
+                        trace!("Read {} bytes from socket", bytes_read);
+
+                        // Socket closed
+                        if bytes_read == 0 {
+                            warn!("Client closed socket. Shutting down the connection");
+
+                            drop(socket);
+                            return
+                        }
+
                         if let Some(message) = messages::parse_buffer(&mut bytes) {
                             if let Some(response) = this.handle_client_message(message).await {
                                 socket.write_all(response.bytes().as_slice()).await.unwrap();
@@ -90,7 +101,7 @@ impl Client {
 
     pub async fn send_message(&mut self, service_name: &String, message: Message) {
         debug!(
-            "Incoming response message for a service `{:?}`: {:?}",
+            "Incoming response message for a service `{}`: {:?}",
             service_name, message
         );
 
@@ -109,7 +120,7 @@ impl Client {
         fd: OsUnixStream,
     ) {
         debug!(
-            "Incoming socket descriptor for a service `{}` from `{:?}`",
+            "Incoming socket descriptor for a service `{}` from `{}`",
             self.service_name(),
             counterparty_service_name
         );
@@ -179,7 +190,7 @@ impl Client {
 
     async fn handle_client_message(&mut self, message: messages::Message) -> Option<Response> {
         trace!(
-            "Incoming service `{:?}` message: {:?}",
+            "Incoming service `{}` message: {:?}",
             self.service_name.read(),
             message
         );
@@ -225,8 +236,8 @@ impl Client {
         // In case we've failed to register service, we drop it anyway
         *(self.service_name.write()) = service_name.clone();
         trace!(
-            "Assigned service name `{:?}` to a client with UUID {:?}",
-            self.service_name,
+            "Assigned service name `{}` to a client with UUID {}",
+            self.service_name.read(),
             self.uuid
         );
 
@@ -257,10 +268,11 @@ impl Client {
             return Some(Response::Error(BusError::NotAllowed).into());
         }
 
+        // Notify hub about connection request
         self.hub_tx
             .send(ClientRequest {
                 uuid: self.uuid.clone(),
-                service_name: service_name.clone(),
+                service_name: self_service_name,
                 message: ServiceRequest::Connect { service_name }.into(),
             })
             .await

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     error::Error,
+    io::ErrorKind,
     os::unix::{
         net::UnixStream as OsStream,
         prelude::{AsRawFd, FromRawFd},
@@ -219,6 +220,17 @@ impl BusConnection {
                             return
                         }
 
+                        let bytes_read = read_result.unwrap();
+                        trace!("Read {} bytes from a hub socket", bytes_read);
+
+                        // Socket closed
+                        if bytes_read == 0 {
+                            warn!("Hub closed its socket. Shutting down the connection");
+
+                            drop(socket);
+                            return
+                        }
+
                         if let Some(message) = messages::parse_buffer(&mut bytes) {
                             if let Some(response) = this.handle_bus_message(message, &mut socket).await {
                                 socket.write_all(response.bytes().as_slice()).await.unwrap();
@@ -269,7 +281,31 @@ impl BusConnection {
                     target_service_name
                 );
 
-                let fd = socket.as_raw_fd().recv_fd()?;
+                let maybe_fd = loop {
+                    // Wait for the socket to be readable
+                    socket.readable().await.unwrap();
+
+                    // Try to read data, this may still fail with `WouldBlock`
+                    // if the readiness event is a false positive.
+                    match socket.as_raw_fd().recv_fd() {
+                        Ok(n) => {
+                            break Some(n);
+                        }
+                        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                            trace!("BLOCK");
+                            continue;
+                        }
+                        Err(_e) => {
+                            break None;
+                        }
+                    }
+                };
+
+                if maybe_fd.is_none() {
+                    error!("Failed to read incoming connection socket");
+                }
+
+                let fd = maybe_fd.unwrap();
                 let os_stream = unsafe { OsStream::from_raw_fd(fd) };
                 let socket = UnixStream::from_std(os_stream).unwrap();
 
@@ -338,7 +374,31 @@ impl BusConnection {
                 // Incoming connection request. Connection socket FD will be coming next
                 Response::IncomingClientFd(service_name) => {
                     // Read socket handle for p2p connection
-                    let fd = socket.as_raw_fd().recv_fd().unwrap();
+                    let maybe_fd = loop {
+                        // Wait for the socket to be readable
+                        socket.readable().await.unwrap();
+
+                        // Try to read data, this may still fail with `WouldBlock`
+                        // if the readiness event is a false positive.
+                        match socket.as_raw_fd().recv_fd() {
+                            Ok(n) => {
+                                break Some(n);
+                            }
+                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                                trace!("BLOCK");
+                                continue;
+                            }
+                            Err(_e) => {
+                                break None;
+                            }
+                        }
+                    };
+
+                    if maybe_fd.is_none() {
+                        error!("Failed to read incoming connection socket");
+                    }
+
+                    let fd = maybe_fd.unwrap();
                     let os_stream = unsafe { OsStream::from_raw_fd(fd) };
                     let incoming_socket = UnixStream::from_std(os_stream).unwrap();
 
@@ -354,6 +414,7 @@ impl BusConnection {
                         .write()
                         .insert(service_name, new_client);
                 }
+                Response::Error(err) => error!("Hub returned an error: {:?}", err),
                 m => error!("Invalid message from the hub: {:?}", m),
             }
         } else {

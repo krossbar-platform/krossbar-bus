@@ -85,23 +85,33 @@ pub fn make_subscription_message(method_name: &str) -> Message {
 }
 
 pub fn parse_buffer(buffer: &mut BytesMut) -> Option<Message> {
-    if let Ok(frame_len_bytes) = buffer.as_ref().try_into() {
-        // First lets find BSON document len
-        let frame_len = i32::from_le_bytes(frame_len_bytes) as usize;
+    // Not enough data
+    if buffer.len() < 4 {
+        return None;
+    }
 
-        trace!("Trying to parse frame with len: {}", frame_len);
+    match buffer.as_ref()[0..4].try_into() {
+        Ok(frame_len_bytes) => {
+            // First lets find BSON document len
+            let frame_len = i32::from_le_bytes(frame_len_bytes) as usize;
 
-        // If buffer contains complete document, try to parse
-        if buffer.len() >= frame_len {
-            if let Ok(frame) = bson::from_slice(buffer.as_ref()) {
-                buffer.advance(frame_len);
+            trace!("Next frame len: {}. Buffer len {}", frame_len, buffer.len());
 
-                trace!("Incoming BSON message of len: {}", frame_len);
+            // If buffer contains complete document, try to parse
+            if buffer.len() >= frame_len {
+                if let Ok(frame) = bson::from_slice(buffer.as_ref()) {
+                    buffer.advance(frame_len);
 
-                return Some(frame);
-            } else {
-                // TODO: Recover
+                    trace!("Incoming BSON message of len: {}", frame_len);
+
+                    return Some(frame);
+                } else {
+                    // TODO: Recover
+                }
             }
+        }
+        Err(err) => {
+            error!("Failed to convert buffer in a slice: {}", err);
         }
     }
 

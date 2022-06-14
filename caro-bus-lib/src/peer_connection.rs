@@ -61,6 +61,17 @@ impl PeerConnection {
                             return
                         }
 
+                        let bytes_read = read_result.unwrap();
+                        trace!("Read {} bytes from a peer socket", bytes_read);
+
+                        // Socket closed
+                        if bytes_read == 0 {
+                            warn!("Peer closed its socket. Shutting down the connection");
+
+                            drop(socket);
+                            return
+                        }
+
                         if let Some(message) = messages::parse_buffer(&mut bytes) {
                             let response = this.handle_peer_message(message).await;
                             socket.write_all(response.bytes().as_slice()).await.unwrap();

@@ -1,6 +1,7 @@
 use std::error::Error;
 
 use bytes::BytesMut;
+use log::*;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -19,6 +20,8 @@ pub async fn send_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let data = message.bytes();
 
+    trace!("Sending data of len {} into socket", data.len());
+
     match socket.write_all(&data).await {
         Ok(_) => Ok(()),
         Err(err) => Err(Box::new(err)),
@@ -35,7 +38,9 @@ pub async fn send_receive_message(
     let mut bytes = BytesMut::with_capacity(64);
     loop {
         match socket.read_buf(&mut bytes).await {
-            Ok(_len) => {
+            Ok(len) => {
+                trace!("Read data of len {} from socket", len);
+
                 if let Some(message) = messages::parse_buffer(&mut bytes) {
                     return Ok(message);
                 }

@@ -17,4 +17,6 @@ async fn main() {
         format!("Hello, {}", val).into()
     })
     .unwrap();
+
+    let _ = tokio::signal::ctrl_c().await;
 }
