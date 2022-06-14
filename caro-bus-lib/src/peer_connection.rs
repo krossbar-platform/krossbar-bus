@@ -23,7 +23,7 @@ type Shared<T> = Arc<RwLock<T>>;
 
 /// P2p service connection handle
 #[derive(Clone)]
-pub struct ServiceConnection {
+pub struct PeerConnection {
     /// Peer service name
     peer_service_name: Shared<String>,
     /// Bus connection tx to send incoming messages from the peer
@@ -32,7 +32,7 @@ pub struct ServiceConnection {
     task_tx: Sender<(Message, OneSender<CallbackType>)>,
 }
 
-impl ServiceConnection {
+impl PeerConnection {
     /// Create new service handle and start tokio task to handle incoming messages from the peer
     pub fn new(
         peer_service_name: String,
@@ -137,7 +137,7 @@ impl ServiceConnection {
     }
 }
 
-impl Debug for ServiceConnection {
+impl Debug for PeerConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Connection to {}", self.peer_service_name.read())
     }

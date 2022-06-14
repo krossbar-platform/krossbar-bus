@@ -19,15 +19,15 @@ use tokio::{
     net::UnixStream,
     sync::{
         mpsc::{self, Receiver, Sender},
-        oneshot::Sender as OneSender,
-        Mutex as AsyncMutex,
+        oneshot::{self, Sender as OneSender},
     },
 };
 
 use super::{
-    method::{Method, MethodCall, MethodTrait},
-    service_connection::ServiceConnection,
-    utils, CallbackType,
+    //method::{Method, MethodCall, MethodTrait},
+    peer_connection::PeerConnection,
+    utils,
+    CallbackType,
 };
 use caro_bus_common::{
     errors::Error as BusError,
@@ -36,6 +36,7 @@ use caro_bus_common::{
 };
 
 type Shared<T> = Arc<RwLock<T>>;
+type MethodCall = (Bson, OneSender<Response>);
 
 /// Bus connection handle. Associated with a service name on the hub.
 /// Used to connect to other services
@@ -45,9 +46,10 @@ pub struct BusConnection {
     /// Own service name
     service_name: Shared<String>,
     /// Connected services. All these connections are p2p
-    connected_services: Shared<HashMap<String, ServiceConnection>>,
-    /// Registered methods
-    methods: Shared<HashMap<String, Arc<AsyncMutex<dyn MethodTrait>>>>,
+    connected_services: Shared<HashMap<String, PeerConnection>>,
+    /// Registered methods. Sender is used to send parameters and
+    /// receive a result from a callback
+    methods: Shared<HashMap<String, Sender<MethodCall>>>,
     /// Sender to make calls into the task
     task_tx: Sender<(Message, OneSender<CallbackType>)>,
 }
@@ -96,7 +98,7 @@ impl BusConnection {
         }
 
         // Start tokio task to handle incoming messages
-        this.start(socket, rx);
+        this.start_task(socket, rx);
 
         Ok(this)
     }
@@ -106,7 +108,7 @@ impl BusConnection {
     pub async fn connect(
         &mut self,
         peer_service_name: String,
-    ) -> Result<ServiceConnection, Box<dyn Error>> {
+    ) -> Result<PeerConnection, Box<dyn Error>> {
         debug!("Connecting to a service `{}`", peer_service_name);
         let services = self.connected_services.read();
 
@@ -129,17 +131,54 @@ impl BusConnection {
         Ok(services.get(&peer_service_name).cloned().unwrap())
     }
 
-    /// Register service method. Returns a Future, which cna be waited for method calls
-    /// P: Paramters type. Should be Send + Sync + DeserializeOwned
-    /// R: Response type. Should be Send + Sync + Serialize
-    pub async fn register_method<P, R>(
+    pub fn register_method<P, R>(
         &mut self,
         method_name: &String,
-    ) -> Result<Receiver<MethodCall<P, R>>, Box<dyn Error>>
+        callback: Box<dyn Fn(&P) -> R + Send>,
+    ) -> Result<(), Box<dyn Error>>
     where
-        P: DeserializeOwned + Sync + Send + 'static,
-        R: Serialize + Sync + Send + 'static,
+        P: DeserializeOwned + 'static,
+        R: Serialize + 'static,
     {
+        let mut rx = self.try_register_method(method_name)?;
+
+        tokio::spawn(async move {
+            loop {
+                if let Some((params, calback_tx)) = rx.recv().await {
+                    match bson::from_bson::<P>(params) {
+                        Ok(params) => {
+                            // Receive method call response
+                            let result = callback(&params);
+
+                            // Deserialize and send user response
+                            calback_tx
+                                .send(Response::Return(bson::to_bson(&result).unwrap()))
+                                .unwrap();
+                        }
+                        Err(err) => {
+                            warn!(
+                                "Failed to deserialize method call parameters: {}",
+                                err.to_string()
+                            );
+
+                            calback_tx
+                                .send(Response::Error(BusError::InvalidParameters))
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Register service method. Returns a Future, which cna be waited for method calls
+    /// *Returns* receiver, which can be used to pull for method calls
+    fn try_register_method(
+        &mut self,
+        method_name: &String,
+    ) -> Result<Receiver<MethodCall>, Box<dyn Error>> {
         // The function just creates a method handle, which performs type conversions
         // for incoming data and client replies. See [Method] for details
         let mut methods = self.methods.write();
@@ -153,14 +192,14 @@ impl BusConnection {
             return Err(Box::new(BusError::MethodRegistered));
         }
 
-        let (method, tx) = Method::<P, R>::new();
+        let (tx, rx) = mpsc::channel(32);
 
-        methods.insert(method_name.clone(), Arc::new(AsyncMutex::new(method)));
-        Ok(tx)
+        methods.insert(method_name.clone(), tx);
+        Ok(rx)
     }
 
     /// Start tokio task to handle incoming requests
-    fn start(
+    fn start_task(
         &mut self,
         mut socket: UnixStream,
         mut rx: Receiver<(Message, OneSender<CallbackType>)>,
@@ -236,11 +275,8 @@ impl BusConnection {
 
                 // Create new service connection handle. Can be used to handle own
                 // connection requests by just returning already existing handle
-                let new_service_connection = ServiceConnection::new(
-                    target_service_name.clone(),
-                    socket,
-                    self.task_tx.clone(),
-                );
+                let new_service_connection =
+                    PeerConnection::new(target_service_name.clone(), socket, self.task_tx.clone());
 
                 // Place the handle into the map of existing connections.
                 // Caller will use the map to return the handle to the client.
@@ -275,11 +311,15 @@ impl BusConnection {
     /// Handle incoming method call
     async fn handle_method_call(&self, method_name: String, params: Bson) -> Message {
         let method = self.methods.read().get(&method_name).cloned();
+
         if let Some(method) = method {
-            match method.lock().await.notify(params).await {
-                Ok(response) => Response::Return(response).into(),
-                Err(err) => BusError::MethodCallError(err.to_string()).into(),
-            }
+            // Create oneshot channel to receive response
+            let (tx, rx) = oneshot::channel();
+
+            // Call user
+            method.send((params, tx)).await.unwrap();
+            // Await for his respons
+            rx.await.unwrap().into()
         } else {
             BusError::MethodRegistered.into()
         }
@@ -303,7 +343,7 @@ impl BusConnection {
                     let incoming_socket = UnixStream::from_std(os_stream).unwrap();
 
                     // Create a client handle
-                    let new_client = ServiceConnection::new(
+                    let new_client = PeerConnection::new(
                         service_name.clone(),
                         incoming_socket,
                         self.task_tx.clone(),

@@ -1,6 +1,5 @@
 pub mod bus_connection;
-mod method;
-pub mod service_connection;
+pub mod peer_connection;
 mod utils;
 
 pub use bus_connection::BusConnection;
