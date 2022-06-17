@@ -8,7 +8,7 @@ use log::*;
 use parking_lot::RwLock;
 use passfd::tokio::FdPassingExt;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     net::UnixStream,
     sync::mpsc::{self, Sender},
 };
@@ -18,7 +18,8 @@ use super::hub::ClientRequest;
 use super::permissions;
 use caro_bus_common::{
     errors::Error as BusError,
-    messages::{self, EitherMessage, Message, Response, ServiceRequest},
+    messages::{self, Message, Response, ServiceRequest},
+    net,
 };
 
 type Shared<T> = Arc<RwLock<T>>;
@@ -61,30 +62,20 @@ impl Client {
 
             loop {
                 tokio::select! {
-                    read_result = socket.read_buf(&mut bytes) => {
-                        if let Err(err) = read_result {
-                            error!("Failed to read from a socket: {}. Client is disconnected. Shutting him down", err.to_string());
-                            drop(socket);
-                            return
-                        }
+                    read_result = net::read_message(&mut socket, &mut bytes) => {
+                        match read_result {
+                            Ok(message) => {
+                                if let Some(response) = this.handle_client_message(message).await {
+                                    socket.write_all(response.bytes().as_slice()).await.unwrap();
+                                }},
+                            Err(err) => {
+                                warn!("Client closed socket. Shutting down the connection: {}", err.to_string());
 
-                        let bytes_read = read_result.unwrap();
-                        trace!("Read {} bytes from socket", bytes_read);
-
-                        // Socket closed
-                        if bytes_read == 0 {
-                            warn!("Client closed socket. Shutting down the connection");
-
-                            drop(socket);
-                            return
-                        }
-
-                        if let EitherMessage::FullMessage(message) = messages::parse_buffer(&mut bytes) {
-                            if let Some(response) = this.handle_client_message(message).await {
-                                socket.write_all(response.bytes().as_slice()).await.unwrap();
+                                drop(socket);
+                                return
                             }
                         }
-                    }
+                    },
                     Some(outgoing_message) = client_rx.recv() => {
                         // If Err(_) returned, service either closed connection, or we want to close it ourselves
                         if let Err(_) = this.write_response_message(&mut socket, outgoing_message).await {

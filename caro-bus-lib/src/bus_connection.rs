@@ -29,7 +29,7 @@ use super::{
 use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, Message, Response, ServiceRequest},
-    HUB_SOCKET_PATH,
+    net, HUB_SOCKET_PATH,
 };
 
 type Shared<T> = Arc<RwLock<T>>;
@@ -217,7 +217,7 @@ impl BusConnection {
             loop {
                 tokio::select! {
                     // Read incoming message from the hub
-                    read_result = utils::read_message(&mut socket, &mut bytes) => {
+                    read_result = net::read_message(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
                                 if let Some(response) = this.handle_bus_message(message, &mut socket).await {

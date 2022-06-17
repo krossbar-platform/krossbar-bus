@@ -93,7 +93,7 @@ pub fn make_subscription_message(method_name: &str) -> Message {
 /// *Returns*:
 /// 1. EitherMessage::FullMessage(message) if completely read the message
 /// 2. EitherMessage::NeedMoreData(len) if still need to read n bytes of data to get a message
-pub fn parse_buffer(buffer: &mut BytesMut) -> EitherMessage {
+pub(crate) fn parse_buffer(buffer: &mut BytesMut) -> EitherMessage {
     // Not enough data
     if buffer.len() < 4 {
         return EitherMessage::NeedMoreData(4);

@@ -17,6 +17,7 @@ use super::{utils, CallbackType};
 use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, Message, Response},
+    net,
 };
 
 type Shared<T> = Arc<RwLock<T>>;
@@ -54,7 +55,7 @@ impl PeerConnection {
             loop {
                 tokio::select! {
                     // Read incoming message from the peer
-                    read_result = utils::read_message(&mut socket, &mut bytes) => {
+                    read_result = net::read_message(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
                                 let response = this.handle_peer_message(message).await;
