@@ -60,6 +60,11 @@ impl Message {
     }
 }
 
+pub enum EitherMessage {
+    FullMessage(Message),
+    NeedMoreData(usize),
+}
+
 pub fn make_register_message(service_name: String) -> Message {
     Message::ServiceRequest(ServiceRequest::Register {
         protocol_version: PROTOCOL_VERSION,
@@ -84,10 +89,14 @@ pub fn make_subscription_message(method_name: &str) -> Message {
     }
 }
 
-pub fn parse_buffer(buffer: &mut BytesMut) -> Option<Message> {
+/// Try to parse a Message from the buffer
+/// *Returns*:
+/// 1. EitherMessage::FullMessage(message) if completely read the message
+/// 2. EitherMessage::NeedMoreData(len) if still need to read n bytes of data to get a message
+pub fn parse_buffer(buffer: &mut BytesMut) -> EitherMessage {
     // Not enough data
     if buffer.len() < 4 {
-        return None;
+        return EitherMessage::NeedMoreData(4);
     }
 
     match buffer.as_ref()[0..4].try_into() {
@@ -102,12 +111,16 @@ pub fn parse_buffer(buffer: &mut BytesMut) -> Option<Message> {
                 if let Ok(frame) = bson::from_slice(buffer.as_ref()) {
                     buffer.advance(frame_len);
 
-                    trace!("Incoming BSON message of len: {}", frame_len);
+                    trace!("Incoming BSON message of len {}: {:?}", frame_len, frame);
 
-                    return Some(frame);
+                    // Full message read
+                    return EitherMessage::FullMessage(frame);
                 } else {
                     // TODO: Recover
                 }
+            } else {
+                // Not enough data for a frame (Bson). Ask to read the rest of the message
+                return EitherMessage::NeedMoreData(frame_len - buffer.len());
             }
         }
         Err(err) => {
@@ -115,5 +128,5 @@ pub fn parse_buffer(buffer: &mut BytesMut) -> Option<Message> {
         }
     }
 
-    None
+    return EitherMessage::NeedMoreData(4);
 }

@@ -5,7 +5,7 @@ use log::*;
 use parking_lot::RwLock;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     net::UnixStream,
     sync::{
         mpsc::{self, Sender},
@@ -54,27 +54,18 @@ impl PeerConnection {
             loop {
                 tokio::select! {
                     // Read incoming message from the peer
-                    read_result = socket.read_buf(&mut bytes) => {
-                        if let Err(err) = read_result {
-                            error!("Failed to read from a socket: {}. Hub is down", err.to_string());
-                            drop(socket);
-                            return
-                        }
+                    read_result = utils::read_message(&mut socket, &mut bytes) => {
+                        match read_result {
+                            Ok(message) => {
+                                let response = this.handle_peer_message(message).await;
+                                socket.write_all(response.bytes().as_slice()).await.unwrap();
+                            },
+                            Err(err) => {
+                                warn!("Peer closed its socket: {}. Shutting down the connection", err.to_string());
 
-                        let bytes_read = read_result.unwrap();
-                        trace!("Read {} bytes from a peer socket", bytes_read);
-
-                        // Socket closed
-                        if bytes_read == 0 {
-                            warn!("Peer closed its socket. Shutting down the connection");
-
-                            drop(socket);
-                            return
-                        }
-
-                        if let Some(message) = messages::parse_buffer(&mut bytes) {
-                            let response = this.handle_peer_message(message).await;
-                            socket.write_all(response.bytes().as_slice()).await.unwrap();
+                                drop(socket);
+                                return
+                            }
                         }
                     },
                     // Handle method calls

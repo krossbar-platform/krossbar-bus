@@ -1,11 +1,7 @@
 use std::{
     collections::HashMap,
     error::Error,
-    io::ErrorKind,
-    os::unix::{
-        net::UnixStream as OsStream,
-        prelude::{AsRawFd, FromRawFd},
-    },
+    os::unix::{net::UnixStream as OsStream, prelude::FromRawFd},
     sync::Arc,
 };
 
@@ -13,10 +9,10 @@ use bson::Bson;
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
-use passfd::FdPassingExt;
+use passfd::tokio::FdPassingExt;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     net::UnixStream,
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -111,11 +107,14 @@ impl BusConnection {
         peer_service_name: String,
     ) -> Result<PeerConnection, Box<dyn Error>> {
         debug!("Connecting to a service `{}`", peer_service_name);
-        let services = self.connected_services.read();
 
         // We may have already connected peer. So first we check if connected
         // and if not, perform connection request
-        if !services.contains_key(&peer_service_name) {
+        if !self
+            .connected_services
+            .read()
+            .contains_key(&peer_service_name)
+        {
             let _ = utils::call_task(
                 &self.task_tx,
                 ServiceRequest::Connect {
@@ -129,7 +128,12 @@ impl BusConnection {
 
         // We either already had connection, or just created one, so we can
         // return existed connection handle
-        Ok(services.get(&peer_service_name).cloned().unwrap())
+        Ok(self
+            .connected_services
+            .read()
+            .get(&peer_service_name)
+            .cloned()
+            .unwrap())
     }
 
     pub fn register_method<P, R>(
@@ -213,27 +217,17 @@ impl BusConnection {
             loop {
                 tokio::select! {
                     // Read incoming message from the hub
-                    read_result = socket.read_buf(&mut bytes) => {
-                        if let Err(err) = read_result {
-                            error!("Failed to read from a socket: {}. Hub is down", err.to_string());
-                            drop(socket);
-                            return
-                        }
-
-                        let bytes_read = read_result.unwrap();
-                        trace!("Read {} bytes from a hub socket", bytes_read);
-
-                        // Socket closed
-                        if bytes_read == 0 {
-                            warn!("Hub closed its socket. Shutting down the connection");
-
-                            drop(socket);
-                            return
-                        }
-
-                        if let Some(message) = messages::parse_buffer(&mut bytes) {
-                            if let Some(response) = this.handle_bus_message(message, &mut socket).await {
+                    read_result = utils::read_message(&mut socket, &mut bytes) => {
+                        match read_result {
+                            Ok(message) => {
+                                if let Some(response) = this.handle_bus_message(message, &mut socket).await {
                                 socket.write_all(response.bytes().as_slice()).await.unwrap();
+                            }},
+                            Err(err) => {
+                                warn!("Hub closed its socket: {}. Shutting down the connection", err.to_string());
+
+                                drop(socket);
+                                return
                             }
                         }
                     },
@@ -276,52 +270,12 @@ impl BusConnection {
             // Handle second case next
             Ok(Message::Response(Response::IncomingClientFd(_))) => {
                 info!(
-                    "Succesfully connected service `{}` to `{}`",
-                    self.service_name.read(),
+                    "Received connection confirmation to `{}` from the hub. Tring to receive peer socket",
                     target_service_name
                 );
 
-                let maybe_fd = loop {
-                    // Wait for the socket to be readable
-                    socket.readable().await.unwrap();
-
-                    // Try to read data, this may still fail with `WouldBlock`
-                    // if the readiness event is a false positive.
-                    match socket.as_raw_fd().recv_fd() {
-                        Ok(n) => {
-                            break Some(n);
-                        }
-                        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                            trace!("BLOCK");
-                            continue;
-                        }
-                        Err(_e) => {
-                            break None;
-                        }
-                    }
-                };
-
-                if maybe_fd.is_none() {
-                    error!("Failed to read incoming connection socket");
-                }
-
-                let fd = maybe_fd.unwrap();
-                let os_stream = unsafe { OsStream::from_raw_fd(fd) };
-                let socket = UnixStream::from_std(os_stream).unwrap();
-
-                // Create new service connection handle. Can be used to handle own
-                // connection requests by just returning already existing handle
-                let new_service_connection =
-                    PeerConnection::new(target_service_name.clone(), socket, self.task_tx.clone());
-
-                // Place the handle into the map of existing connections.
-                // Caller will use the map to return the handle to the client.
-                // See [connect] for the details
-                self.connected_services
-                    .write()
-                    .insert(target_service_name, new_service_connection);
-
-                Ok(Message::Response(Response::Ok))
+                self.receive_and_register_peer_fd(target_service_name, socket)
+                    .await
             }
             // Hub doesn't allow connection
             Ok(Message::Response(Response::Error(err))) => {
@@ -373,48 +327,19 @@ impl BusConnection {
             match request {
                 // Incoming connection request. Connection socket FD will be coming next
                 Response::IncomingClientFd(service_name) => {
-                    // Read socket handle for p2p connection
-                    let maybe_fd = loop {
-                        // Wait for the socket to be readable
-                        socket.readable().await.unwrap();
+                    trace!("Received peer connection message from the hub. Trying to receive peer socket");
 
-                        // Try to read data, this may still fail with `WouldBlock`
-                        // if the readiness event is a false positive.
-                        match socket.as_raw_fd().recv_fd() {
-                            Ok(n) => {
-                                break Some(n);
-                            }
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                trace!("BLOCK");
-                                continue;
-                            }
-                            Err(_e) => {
-                                break None;
-                            }
-                        }
-                    };
-
-                    if maybe_fd.is_none() {
-                        error!("Failed to read incoming connection socket");
+                    if let Err(err) = self
+                        .receive_and_register_peer_fd(service_name, socket)
+                        .await
+                    {
+                        error!(
+                            "Failed to receive peer file descriptor: {}",
+                            err.to_string()
+                        );
                     }
-
-                    let fd = maybe_fd.unwrap();
-                    let os_stream = unsafe { OsStream::from_raw_fd(fd) };
-                    let incoming_socket = UnixStream::from_std(os_stream).unwrap();
-
-                    // Create a client handle
-                    let new_client = PeerConnection::new(
-                        service_name.clone(),
-                        incoming_socket,
-                        self.task_tx.clone(),
-                    );
-
-                    // Place the handle into the clients map
-                    self.connected_services
-                        .write()
-                        .insert(service_name, new_client);
                 }
-                Response::Error(err) => error!("Hub returned an error: {:?}", err),
+                Response::Error(err) => error!("Hub send us an error: {:?}", err),
                 m => error!("Invalid message from the hub: {:?}", m),
             }
         } else {
@@ -422,5 +347,43 @@ impl BusConnection {
         }
 
         None
+    }
+
+    /// Well, receive client socket descriptor and create an entry in clients map
+    async fn receive_and_register_peer_fd(
+        &self,
+        peer_service_name: String,
+        socket: &mut UnixStream,
+    ) -> Result<Message, Box<dyn Error + Sync + Send>> {
+        match socket.recv_fd().await {
+            Ok(peer_fd) => {
+                trace!("Succesfully received peer socket from the hub");
+
+                let os_stream = unsafe { OsStream::from_raw_fd(peer_fd) };
+                let incoming_socket = UnixStream::from_std(os_stream).unwrap();
+
+                // Create new service connection handle. Can be used to handle own
+                // connection requests by just returning already existing handle
+                let new_service_connection = PeerConnection::new(
+                    peer_service_name.clone(),
+                    incoming_socket,
+                    self.task_tx.clone(),
+                );
+
+                // Place the handle into the map of existing connections.
+                // Caller will use the map to return the handle to the client.
+                // See [connect] for the details
+                self.connected_services
+                    .try_write()
+                    .unwrap()
+                    .insert(peer_service_name, new_service_connection);
+
+                Ok(Message::Response(Response::Ok))
+            }
+            Err(err) => {
+                error!("Failed to receive peer socket: {:?}", err);
+                Err(Box::new(err))
+            }
+        }
     }
 }

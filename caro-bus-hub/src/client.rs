@@ -6,7 +6,7 @@ use std::{
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
-use passfd::FdPassingExt;
+use passfd::tokio::FdPassingExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -18,7 +18,7 @@ use super::hub::ClientRequest;
 use super::permissions;
 use caro_bus_common::{
     errors::Error as BusError,
-    messages::{self, Message, Response, ServiceRequest},
+    messages::{self, EitherMessage, Message, Response, ServiceRequest},
 };
 
 type Shared<T> = Arc<RwLock<T>>;
@@ -79,7 +79,7 @@ impl Client {
                             return
                         }
 
-                        if let Some(message) = messages::parse_buffer(&mut bytes) {
+                        if let EitherMessage::FullMessage(message) = messages::parse_buffer(&mut bytes) {
                             if let Some(response) = this.handle_client_message(message).await {
                                 socket.write_all(response.bytes().as_slice()).await.unwrap();
                             }
@@ -167,14 +167,12 @@ impl Client {
                     return Err(err);
                 }
 
-                // And the descriptor itself. To minimize blocking wait until socket is ready to send
-                if let Err(err) = socket.writable().await {
-                    error!("Failed to wait for writable socket: {}. Client is disconnected. Shutting him down", err.to_string());
-                    drop(socket);
-                    return Err(err);
-                }
+                trace!(
+                    "Got client socket to send to a service `{}`. Trying to send",
+                    self.service_name()
+                );
 
-                if let Err(err) = socket.as_raw_fd().send_fd(fd.as_raw_fd()) {
+                if let Err(err) = socket.send_fd(fd.as_raw_fd()).await {
                     error!(
                         "Failed to send fd to the service `{:?}`: {}",
                         self.service_name(),
@@ -182,6 +180,8 @@ impl Client {
                     );
                     return Err(err);
                 }
+
+                debug!("Successfully sent peer socket to `{}`", self.service_name());
             }
         }
 

@@ -11,6 +11,8 @@ parking_lot = "0.12"
 uuid = { version = "1.1", features = ["v4", "fast-rng"] }
 log = "0.4"
 pretty_env_logger = "0.4"
-passfd = "0.1.4"
+passfd = { git = "https://github.com/alexander-smoktal/passfd", version = "0.1.5", features = [
+  "tokio",
+] }
 
 caro-bus-common = { path = "../caro-bus-common" }
