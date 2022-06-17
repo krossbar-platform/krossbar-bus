@@ -93,25 +93,28 @@ impl Hub {
     }
 
     async fn handle_client_call(&mut self, request: ClientRequest) {
-        if let Message::ServiceRequest(service_message) = request.message {
-            match service_message {
-                ServiceRequest::Register {
-                    protocol_version: _,
-                    service_name,
-                } => {
-                    self.handle_client_registration(request.uuid, service_name)
-                        .await
-                }
-                ServiceRequest::Connect { service_name } => {
-                    self.handle_new_connection_request(request.service_name, service_name)
-                        .await
-                }
+        match request.message {
+            Message::ServiceRequest(ServiceRequest::Register {
+                protocol_version: _,
+                service_name,
+            }) => {
+                self.handle_client_registration(request.uuid, service_name)
+                    .await
             }
-        } else {
-            error!(
-                "Ivalid message from a client `{:?}`: {:?}",
-                request.service_name, request.message
-            );
+            Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
+                self.handle_new_connection_request(request.service_name, service_name)
+                    .await
+            }
+            Message::Response(Response::Shutdown) => {
+                self.handle_disconnection(&request.uuid, &request.service_name)
+                    .await;
+            }
+            message => {
+                error!(
+                    "Ivalid message from a client `{:?}`: {:?}",
+                    request.service_name, message
+                );
+            }
         }
     }
 
@@ -143,6 +146,8 @@ impl Hub {
                         .send_message(&service_name, Response::Ok.into())
                         .await;
                     self.clients.insert(service_name, client);
+
+                    trace!("New named clients count: {}", self.clients.len());
                 }
             }
             e => {
@@ -215,6 +220,13 @@ impl Hub {
             "Succesfully connected `{}` to `{}`",
             client_service_name, target_service_name
         )
+    }
+
+    async fn handle_disconnection(&mut self, uuid: &Uuid, service_name: &String) {
+        self.anonymous_clients.remove(uuid);
+        self.clients.remove(service_name);
+
+        trace!("New named clients count: {}", self.clients.len());
     }
 }
 

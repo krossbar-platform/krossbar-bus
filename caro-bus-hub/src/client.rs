@@ -1,4 +1,5 @@
 use std::{
+    io::ErrorKind,
     os::unix::{io::AsRawFd, net::UnixStream as OsUnixStream},
     sync::Arc,
 };
@@ -10,7 +11,7 @@ use passfd::tokio::FdPassingExt;
 use tokio::{
     io::AsyncWriteExt,
     net::UnixStream,
-    sync::mpsc::{self, Sender},
+    sync::mpsc::{self, Receiver, Sender},
 };
 use uuid::Uuid;
 
@@ -28,6 +29,7 @@ type Shared<T> = Arc<RwLock<T>>;
 enum HubReponse {
     Fd(Message, OsUnixStream),
     Message(Message),
+    Shutdown(Message),
 }
 
 #[derive(Clone)]
@@ -65,22 +67,35 @@ impl Client {
                     read_result = net::read_message(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
-                                if let Some(response) = this.handle_client_message(message).await {
-                                    socket.write_all(response.bytes().as_slice()).await.unwrap();
+                                if let Some(response) = this.handle_client_request(message).await {
+                                    // Failed to write into socket. Client shutwodn
+                                    if let Err(err) = socket.write_all(response.bytes().as_slice()).await {
+                                        error!("Failed to write into a client socket: {}. Shutting him down", err.to_string());
+                                        // NOTE: We do not drop socket here. First we ask hub to delete connection handler
+                                        // And later drop routing will send us a message to close connection and return
+                                        // See client_tx handling
+                                        this.perform_shutdown(&mut socket, &mut client_rx).await;
+                                        drop(socket);
+                                        return
+                                    }
                                 }},
                             Err(err) => {
-                                warn!("Client closed socket. Shutting down the connection: {}", err.to_string());
+                                warn!("Client closed socket. Asking hub to delete the connection becasue of: {}", err.to_string());
 
+                                // NOTE: We do not drop socket here. First we ask hub to delete connection handler
+                                // And later drop routing will send us a message to close connection and return
+                                // See client_tx handling
+                                this.perform_shutdown(&mut socket, &mut client_rx).await;
                                 drop(socket);
                                 return
                             }
                         }
                     },
                     Some(outgoing_message) = client_rx.recv() => {
-                        // If Err(_) returned, service either closed connection, or we want to close it ourselves
+                        // If Err(_) returned, hub wants to close our connection
                         if let Err(_) = this.write_response_message(&mut socket, outgoing_message).await {
                             drop(socket);
-                            return;
+                            return
                         }
                     }
                 }
@@ -90,6 +105,7 @@ impl Client {
         client_handle
     }
 
+    // Request to send message to a client
     pub async fn send_message(&mut self, service_name: &String, message: Message) {
         debug!(
             "Incoming response message for a service `{}`: {:?}",
@@ -105,6 +121,7 @@ impl Client {
         }
     }
 
+    // Request to send connection fd to a client
     pub async fn send_connection_fd(
         &mut self,
         counterparty_service_name: &String,
@@ -127,6 +144,7 @@ impl Client {
         }
     }
 
+    // Write response message into a client socket
     async fn write_response_message(
         &mut self,
         socket: &mut UnixStream,
@@ -154,7 +172,6 @@ impl Client {
                 // Send Ok message, so our client starts listening to the incoming fd
                 if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
                     error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
-                    drop(socket);
                     return Err(err);
                 }
 
@@ -174,12 +191,22 @@ impl Client {
 
                 debug!("Successfully sent peer socket to `{}`", self.service_name());
             }
+            HubReponse::Shutdown(message) => {
+                info!(
+                    "Hub wants to close connection. Shutting down `{}`",
+                    self.service_name()
+                );
+                let _ = socket.write_all(message.bytes().as_slice()).await;
+
+                return Err(ErrorKind::ConnectionReset.into());
+            }
         }
 
         Ok(())
     }
 
-    async fn handle_client_message(&mut self, message: messages::Message) -> Option<Response> {
+    // Handle incoming client message
+    async fn handle_client_request(&mut self, message: messages::Message) -> Option<Response> {
         trace!(
             "Incoming service `{}` message: {:?}",
             self.service_name.read(),
@@ -205,6 +232,7 @@ impl Client {
         }
     }
 
+    // Handle incoming client registration request
     async fn handle_registration_message(
         &mut self,
         protocol_version: i64,
@@ -232,22 +260,19 @@ impl Client {
             self.uuid
         );
 
-        self.hub_tx
-            .send(ClientRequest {
-                uuid: self.uuid.clone(),
-                service_name: service_name.clone(),
-                message: ServiceRequest::Register {
-                    protocol_version,
-                    service_name,
-                }
-                .into(),
-            })
-            .await
-            .unwrap();
+        self.send_message_to_hub(
+            ServiceRequest::Register {
+                protocol_version,
+                service_name,
+            }
+            .into(),
+        )
+        .await;
 
         None
     }
 
+    // handle incoming client connection request
     async fn handle_connect_message(&mut self, service_name: String) -> Option<Response> {
         let self_service_name = self.service_name.read().clone();
 
@@ -260,28 +285,56 @@ impl Client {
         }
 
         // Notify hub about connection request
+        self.send_message_to_hub(ServiceRequest::Connect { service_name }.into())
+            .await;
+
+        None
+    }
+
+    // Sends a message to the hub through a channel
+    async fn send_message_to_hub(&self, message: Message) {
+        let service_name = self.service_name.read().clone();
+
         self.hub_tx
             .send(ClientRequest {
                 uuid: self.uuid.clone(),
-                service_name: self_service_name,
-                message: ServiceRequest::Connect { service_name }.into(),
+                service_name,
+                message: message,
             })
             .await
             .unwrap();
+    }
 
-        None
+    async fn perform_shutdown(&mut self, socket: &mut UnixStream, rx: &mut Receiver<HubReponse>) {
+        trace!("Starting shutdown sequence for a client");
+
+        // Send request to a hub, asking to delete client handle
+        self.send_message_to_hub(Response::Shutdown.into()).await;
+        // Do not perform any IO, but wait for a response from the hub
+        let message = rx.recv().await.unwrap();
+        // Try to send response to a client, if he's still alive
+        let _ = self.write_response_message(socket, message).await;
+
+        trace!("Finished shutdown sequence for a client");
     }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
+        if self.client_tx.is_closed() {
+            return;
+        }
+
         debug!(
             "Shutting down service connection for `{:?}`",
             self.service_name.read()
         );
 
-        let _ = self
-            .client_tx
-            .blocking_send(HubReponse::Message(Response::Shutdown.into()));
+        let tx = self.client_tx.clone();
+        tokio::spawn(async move {
+            tx.send(HubReponse::Shutdown(Response::Shutdown.into()))
+                .await
+                .unwrap();
+        });
     }
 }
