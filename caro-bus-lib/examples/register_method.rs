@@ -19,4 +19,5 @@ async fn main() {
     .unwrap();
 
     let _ = tokio::signal::ctrl_c().await;
+    bus.close().await;
 }

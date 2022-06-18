@@ -13,7 +13,7 @@ use tokio::{
     },
 };
 
-use super::{utils, CallbackType};
+use super::{utils, BusConnection, CallbackType};
 use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, Message, Response},
@@ -27,24 +27,20 @@ type Shared<T> = Arc<RwLock<T>>;
 pub struct PeerConnection {
     /// Peer service name
     peer_service_name: Shared<String>,
-    /// Bus connection tx to send incoming messages from the peer
-    bus_connection_tx: Sender<(Message, OneSender<CallbackType>)>,
+    /// Bus connection send incoming messages from the peer
+    bus: BusConnection,
     /// Sender to make calls into the task
     task_tx: Sender<(Message, OneSender<CallbackType>)>,
 }
 
 impl PeerConnection {
     /// Create new service handle and start tokio task to handle incoming messages from the peer
-    pub fn new(
-        peer_service_name: String,
-        mut socket: UnixStream,
-        bus_connection_tx: Sender<(Message, OneSender<CallbackType>)>,
-    ) -> Self {
-        let (task_tx, mut rx) = mpsc::channel(32);
+    pub fn new(peer_service_name: String, mut socket: UnixStream, bus: BusConnection) -> Self {
+        let (task_tx, mut task_rx) = mpsc::channel(32);
 
         let mut this = Self {
             peer_service_name: Arc::new(RwLock::new(peer_service_name)),
-            bus_connection_tx,
+            bus,
             task_tx,
         };
         let result = this.clone();
@@ -59,22 +55,42 @@ impl PeerConnection {
                         match read_result {
                             Ok(message) => {
                                 let response = this.handle_peer_message(message).await;
-                                socket.write_all(response.bytes().as_slice()).await.unwrap();
-                            },
-                            Err(err) => {
-                                warn!("Peer closed its socket: {}. Shutting down the connection", err.to_string());
 
+                                if let Err(_) = socket.write_all(response.bytes().as_slice()).await {
+                                    let peer_name = this.peer_service_name.read().clone();
+                                    error!("Failed to write peer `{}` response. Shutting him down", peer_name);
+
+                                    this.bus.remove_peer(peer_name);
+                                    drop(socket);
+                                    return
+                                }
+                            },
+                            Err(_) => {
+                                let peer_name = this.peer_service_name.read().clone();
+                                error!("Failed to read peer `{}` message. Shutting him down", peer_name);
+
+                                this.bus.remove_peer(peer_name);
                                 drop(socket);
                                 return
                             }
                         }
                     },
                     // Handle method calls
-                    Some((request, callback_tx)) = rx.recv() => {
+                    Some((request, callback_tx)) = task_rx.recv() => {
+                        trace!("Peer task message: {:?}", request);
+
                         match request {
                             Message::MethodCall{..} => {
                                 callback_tx.send(utils::send_receive_message(&mut socket, request).await).unwrap();
                             },
+                            Message::Response(Response::Shutdown) => {
+                                //let peer_name = this.peer_service_name.read().clone();
+                                //error!("Peer connection `{}` received shutdown request",  peer_name);
+                                callback_tx.send(Ok(Response::Ok.into())).unwrap();
+
+                                drop(socket);
+                                return
+                            }
                             m => { error!("Invalid incoming message for a service: {:?}", m) }
                         };
                     }
@@ -132,11 +148,28 @@ impl PeerConnection {
     async fn handle_peer_message(&mut self, message: messages::Message) -> Message {
         trace!("Incoming client message: {:?}", message);
 
-        if let Ok(response) = utils::call_task(&self.bus_connection_tx, message).await {
-            response
-        } else {
-            BusError::Internal.into()
+        match self.bus.handle_peer_message(message).await {
+            Ok(response) => response,
+            Err(err) => {
+                warn!(
+                    "Error return as a result of peer message handling: {}",
+                    err.to_string()
+                );
+
+                BusError::InvalidProtocol.into()
+            }
         }
+    }
+
+    pub async fn close(&mut self) {
+        debug!(
+            "Shutting down peer connection to `{:?}`",
+            self.peer_service_name.read()
+        );
+
+        utils::call_task(&self.task_tx, Response::Shutdown.into())
+            .await
+            .unwrap();
     }
 }
 

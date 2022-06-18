@@ -21,7 +21,7 @@ pub async fn read_message(socket: &mut UnixStream, buffer: &mut BytesMut) -> IoR
             Ok(bytes_read) => {
                 // Socket closed
                 if bytes_read == 0 {
-                    warn!("Client closed socket. Shutting down the connection");
+                    trace!("Read zero bytes from a socket");
 
                     return Err(ErrorKind::BrokenPipe.into());
                 }

@@ -36,7 +36,7 @@ enum HubReponse {
 pub struct Client {
     uuid: Uuid,
     service_name: Shared<String>,
-    client_tx: Sender<HubReponse>,
+    task_tx: Sender<HubReponse>,
     hub_tx: Sender<ClientRequest>,
 }
 
@@ -54,7 +54,7 @@ impl Client {
         let client_handle = Self {
             uuid,
             service_name: Arc::new(RwLock::new(String::from(""))),
-            client_tx,
+            task_tx: client_tx,
             hub_tx,
         };
         let mut this = client_handle.clone();
@@ -112,7 +112,7 @@ impl Client {
             service_name, message
         );
 
-        if let Err(err) = self.client_tx.send(HubReponse::Message(message)).await {
+        if let Err(err) = self.task_tx.send(HubReponse::Message(message)).await {
             error!(
                 "Failed to send message to the client `{}`: {}",
                 service_name,
@@ -135,7 +135,7 @@ impl Client {
 
         let message = Response::IncomingClientFd(counterparty_service_name.clone()).into();
 
-        if let Err(err) = self.client_tx.send(HubReponse::Fd(message, fd)).await {
+        if let Err(err) = self.task_tx.send(HubReponse::Fd(message, fd)).await {
             error!(
                 "Failed to send socket descriptor to the client `{}`: {}",
                 counterparty_service_name,
@@ -321,7 +321,7 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        if self.client_tx.is_closed() {
+        if self.task_tx.is_closed() {
             return;
         }
 
@@ -330,7 +330,7 @@ impl Drop for Client {
             self.service_name.read()
         );
 
-        let tx = self.client_tx.clone();
+        let tx = self.task_tx.clone();
         tokio::spawn(async move {
             tx.send(HubReponse::Shutdown(Response::Shutdown.into()))
                 .await

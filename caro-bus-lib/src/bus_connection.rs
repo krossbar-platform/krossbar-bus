@@ -3,6 +3,7 @@ use std::{
     error::Error,
     os::unix::{net::UnixStream as OsStream, prelude::FromRawFd},
     sync::Arc,
+    time::Duration,
 };
 
 use bson::Bson;
@@ -18,6 +19,7 @@ use tokio::{
         mpsc::{self, Receiver, Sender},
         oneshot::{self, Sender as OneSender},
     },
+    time,
 };
 
 use super::{
@@ -31,6 +33,8 @@ use caro_bus_common::{
     messages::{self, Message, Response, ServiceRequest},
     net, HUB_SOCKET_PATH,
 };
+
+const RECONNECT_RETRY_PERIOD: Duration = Duration::from_secs(1);
 
 type Shared<T> = Arc<RwLock<T>>;
 type MethodCall = (Bson, OneSender<Response>);
@@ -55,13 +59,8 @@ impl BusConnection {
     /// Register service. Tries to register the service at the hub. The method may fail registering
     /// if the executable is not allowed to register with the given service name, or
     /// service name is already taken
-    pub async fn register(service_name: String) -> Result<Self, Box<dyn Error>> {
+    pub async fn register(service_name: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
         debug!("Registering service `{}`", service_name);
-
-        // First connect to a socket
-        let mut socket = UnixStream::connect(HUB_SOCKET_PATH).await?;
-
-        let request = messages::make_register_message(service_name.clone());
 
         let (task_tx, rx) = mpsc::channel(32);
         let mut this = Self {
@@ -71,20 +70,34 @@ impl BusConnection {
             task_tx,
         };
 
+        let mut socket = BusConnection::connect_to_hub().await?;
+        this.perform_registration(&mut socket).await?;
+
+        // Start tokio task to handle incoming messages
+        this.start_task(socket, rx);
+
+        Ok(this)
+    }
+
+    /// Connect to a hub socket and send registration request
+    async fn perform_registration(
+        &mut self,
+        socket: &mut UnixStream,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // First connect to a socket
+        let self_name = self.service_name.read().clone();
+
+        let request = messages::make_register_message(self_name.clone());
+
         // Send connection request and wait for a response
-        match utils::send_receive_message(&mut socket, request).await {
+        match utils::send_receive_message(socket, request).await {
             Ok(Message::Response(Response::Ok)) => {
-                info!(
-                    "Succesfully registered service as `{}`",
-                    this.service_name.read()
-                );
+                info!("Succesfully registered service as `{}`", self_name);
+
+                Ok(())
             }
             Ok(Message::Response(Response::Error(err))) => {
-                warn!(
-                    "Failed to register service as `{}`: {}",
-                    this.service_name.read(),
-                    err
-                );
+                warn!("Failed to register service as `{}`: {}", self_name, err);
                 return Err(Box::new(err));
             }
             Ok(m) => {
@@ -93,11 +106,90 @@ impl BusConnection {
             }
             Err(err) => return Err(err),
         }
+    }
 
-        // Start tokio task to handle incoming messages
-        this.start_task(socket, rx);
+    async fn connect_to_hub() -> Result<UnixStream, Box<dyn Error + Send + Sync>> {
+        info!("Connecting to a hub socket");
 
-        Ok(this)
+        UnixStream::connect(HUB_SOCKET_PATH)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn reconnect(&mut self) -> Result<UnixStream, Box<dyn Error + Send + Sync>> {
+        loop {
+            // Try to reconnect to the hub. I fails, we just retry
+            match BusConnection::connect_to_hub().await {
+                Ok(mut socket) => {
+                    info!("Succesfully reconnected to the hub");
+
+                    // Try to connect and register
+                    return self.perform_registration(&mut socket).await.and(Ok(socket));
+                }
+                Err(_) => {
+                    debug!("Failed to reconnect to a hub socket. Will try again");
+
+                    time::sleep(RECONNECT_RETRY_PERIOD).await;
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Start tokio task to handle incoming requests
+    fn start_task(
+        &mut self,
+        mut socket: UnixStream,
+        mut task_rx: Receiver<(Message, OneSender<CallbackType>)>,
+    ) {
+        let mut this = self.clone();
+
+        tokio::spawn(async move {
+            let mut bytes = BytesMut::with_capacity(64);
+
+            loop {
+                tokio::select! {
+                    // Read incoming message from the hub
+                    read_result = net::read_message(&mut socket, &mut bytes) => {
+                        match read_result {
+                            Ok(message) => {
+                                if let Some(response) = this.handle_bus_message(message, &mut socket).await {
+                                socket.write_all(response.bytes().as_slice()).await.unwrap();
+                            }},
+                            Err(err) => {
+                                warn!("Hub closed its socket: {}. Trying to reconnect", err.to_string());
+
+                                match this.reconnect().await {
+                                    Ok(new_socket) => socket = new_socket,
+                                    Err(err) => {
+                                        error!("Failed to reconnect to a hub: {}", err.to_string());
+                                        return
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    Some((request, callback_tx)) = task_rx.recv() => {
+                        trace!("Service task message: {:?}", request);
+
+                        match request {
+                            Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
+                                callback_tx.send(this.perfom_service_connection(service_name, &mut socket).await).unwrap();
+                            },
+                            // Someone wants us to shutdown
+                            Message::Response(Response::Shutdown) => {
+                                info!("Service connection received shutdown request");
+                                callback_tx.send(Ok(Response::Ok.into())).unwrap();
+
+                                drop(socket);
+                                return
+                            }
+                            m => { error!("Invalid client message: {:?}", m) }
+                        };
+                    },
+                };
+            }
+        });
     }
 
     /// Connect to a service. This call is asynchronous and may fail.
@@ -145,31 +237,38 @@ impl BusConnection {
         P: DeserializeOwned + 'static,
         R: Serialize + 'static,
     {
-        let mut rx = self.try_register_method(method_name)?;
+        let method_name = method_name.clone();
+        let mut rx = self.try_register_method(&method_name)?;
 
         tokio::spawn(async move {
             loop {
-                if let Some((params, calback_tx)) = rx.recv().await {
-                    match bson::from_bson::<P>(params) {
-                        Ok(params) => {
-                            // Receive method call response
-                            let result = callback(&params);
+                match rx.recv().await {
+                    Some((params, calback_tx)) => {
+                        match bson::from_bson::<P>(params) {
+                            Ok(params) => {
+                                // Receive method call response
+                                let result = callback(&params);
 
-                            // Deserialize and send user response
-                            calback_tx
-                                .send(Response::Return(bson::to_bson(&result).unwrap()))
-                                .unwrap();
-                        }
-                        Err(err) => {
-                            warn!(
-                                "Failed to deserialize method call parameters: {}",
-                                err.to_string()
-                            );
+                                // Deserialize and send user response
+                                calback_tx
+                                    .send(Response::Return(bson::to_bson(&result).unwrap()))
+                                    .unwrap();
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "Failed to deserialize method call parameters: {}",
+                                    err.to_string()
+                                );
 
-                            calback_tx
-                                .send(Response::Error(BusError::InvalidParameters))
-                                .unwrap();
+                                calback_tx
+                                    .send(Response::Error(BusError::InvalidParameters))
+                                    .unwrap();
+                            }
                         }
+                    }
+                    None => {
+                        trace!("Method {} shut down", method_name);
+                        return;
                     }
                 }
             }
@@ -203,49 +302,28 @@ impl BusConnection {
         Ok(rx)
     }
 
-    /// Start tokio task to handle incoming requests
-    fn start_task(
-        &mut self,
-        mut socket: UnixStream,
-        mut rx: Receiver<(Message, OneSender<CallbackType>)>,
-    ) {
-        let mut this = self.clone();
-
-        tokio::spawn(async move {
-            let mut bytes = BytesMut::with_capacity(64);
-
-            loop {
-                tokio::select! {
-                    // Read incoming message from the hub
-                    read_result = net::read_message(&mut socket, &mut bytes) => {
-                        match read_result {
-                            Ok(message) => {
-                                if let Some(response) = this.handle_bus_message(message, &mut socket).await {
-                                socket.write_all(response.bytes().as_slice()).await.unwrap();
-                            }},
-                            Err(err) => {
-                                warn!("Hub closed its socket: {}. Shutting down the connection", err.to_string());
-
-                                drop(socket);
-                                return
-                            }
-                        }
-                    },
-                    // Handle service requests and method calls
-                    Some((request, callback)) = rx.recv()  => {
-                        match request {
-                            Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
-                                callback.send(this.perfom_service_connection(service_name, &mut socket).await).unwrap();
-                            },
-                            Message::MethodCall{ method_name, params } => {
-                                callback.send(Ok(this.handle_method_call(method_name, params).await)).unwrap();
-                            }
-                            m => { error!("Invalid incoming message from a client: {:?}", m) }
-                        };
-                    }
-                };
+    /// Handle messages incoming form an existent peer connection
+    pub async fn handle_peer_message(
+        &self,
+        message: messages::Message,
+    ) -> Result<Message, Box<dyn Error + Send + Sync>> {
+        match message {
+            // Method call
+            Message::MethodCall {
+                method_name,
+                params,
+            } => Ok(self.handle_method_call(method_name, params).await),
+            m => {
+                error!("Invalid incoming message from library client: {:?}", m);
+                Err(BusError::InvalidProtocol.into())
             }
-        });
+        }
+    }
+
+    pub fn remove_peer(&mut self, peer_name: String) {
+        info!("Service client `{}` disconnected", peer_name);
+
+        self.connected_services.write().remove(&peer_name);
     }
 
     /// Perform connection to an another service.
@@ -364,11 +442,8 @@ impl BusConnection {
 
                 // Create new service connection handle. Can be used to handle own
                 // connection requests by just returning already existing handle
-                let new_service_connection = PeerConnection::new(
-                    peer_service_name.clone(),
-                    incoming_socket,
-                    self.task_tx.clone(),
-                );
+                let new_service_connection =
+                    PeerConnection::new(peer_service_name.clone(), incoming_socket, self.clone());
 
                 // Place the handle into the map of existing connections.
                 // Caller will use the map to return the handle to the client.
@@ -385,5 +460,20 @@ impl BusConnection {
                 Err(Box::new(err))
             }
         }
+    }
+
+    pub async fn close(&mut self) {
+        debug!(
+            "Shutting down service connection for `{:?}`",
+            self.service_name.read()
+        );
+
+        for peer in self.connected_services.write().values_mut() {
+            peer.close().await
+        }
+
+        utils::call_task(&self.task_tx, Response::Shutdown.into())
+            .await
+            .unwrap();
     }
 }
