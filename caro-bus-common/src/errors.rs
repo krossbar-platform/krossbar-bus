@@ -1,8 +1,8 @@
-use super::messages::{Message, Response};
+use super::messages::{IntoMessage, Message, MessageBody, Response};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Serialize, Deserialize, Debug, Error)]
+#[derive(Serialize, Deserialize, Debug, Error, Clone)]
 pub enum Error {
     #[error("Connection with service now allowed")]
     NotAllowed,
@@ -13,7 +13,7 @@ pub enum Error {
     #[error("Method already registered")]
     MethodCallError(String),
     #[error("Method not registered")]
-    MethodRegistered,
+    MethodNotRegistered,
     #[error("Invalid protocol version. Please update Caro dependencies")]
     InvalidProtocol,
     #[error("Invalid parameters passed into a function")]
@@ -24,8 +24,11 @@ pub enum Error {
     Internal,
 }
 
-impl Into<Message> for Error {
-    fn into(self) -> Message {
-        Message::Response(Response::Error(self))
+impl IntoMessage for Error {
+    fn into_message(self, seq: u64) -> Message {
+        Message {
+            seq,
+            body: MessageBody::Response(Response::Error(self)),
+        }
     }
 }

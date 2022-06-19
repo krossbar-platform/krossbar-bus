@@ -3,7 +3,7 @@ use tokio;
 
 use caro_bus_lib::BusConnection;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     pretty_env_logger::formatted_builder()
         .filter_level(LevelFilter::Trace)

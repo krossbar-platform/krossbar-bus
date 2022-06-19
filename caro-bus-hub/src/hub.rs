@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs, os::unix::net::UnixStream as OsUnixStream};
 
 use caro_bus_common::{
     errors::Error as BusError,
-    messages::{Message, Response, ServiceRequest},
+    messages::{IntoMessage, Message, MessageBody, Response, ServiceRequest},
     HUB_SOCKET_PATH,
 };
 use log::*;
@@ -93,19 +93,27 @@ impl Hub {
     }
 
     async fn handle_client_call(&mut self, request: ClientRequest) {
-        match request.message {
-            Message::ServiceRequest(ServiceRequest::Register {
+        match request.message.body() {
+            MessageBody::ServiceRequest(ServiceRequest::Register {
                 protocol_version: _,
                 service_name,
             }) => {
-                self.handle_client_registration(request.uuid, service_name)
-                    .await
+                self.handle_client_registration(
+                    request.uuid,
+                    service_name.clone(),
+                    request.message.seq(),
+                )
+                .await
             }
-            Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
-                self.handle_new_connection_request(request.service_name, service_name)
-                    .await
+            MessageBody::ServiceRequest(ServiceRequest::Connect { peer_service_name }) => {
+                self.handle_new_connection_request(
+                    request.service_name,
+                    peer_service_name.clone(),
+                    request.message.seq(),
+                )
+                .await
             }
-            Message::Response(Response::Shutdown) => {
+            MessageBody::Response(Response::Shutdown) => {
                 self.handle_disconnection(&request.uuid, &request.service_name)
                     .await;
             }
@@ -118,7 +126,7 @@ impl Hub {
         }
     }
 
-    async fn handle_client_registration(&mut self, uuid: Uuid, service_name: String) {
+    async fn handle_client_registration(&mut self, uuid: Uuid, service_name: String, seq: u64) {
         trace!(
             "Trying to assign service name `{}` to a client with uuid {}",
             service_name,
@@ -134,16 +142,13 @@ impl Hub {
                     );
 
                     client
-                        .send_message(
-                            &service_name,
-                            Response::Error(BusError::NameRegistered).into(),
-                        )
+                        .send_message(&service_name, BusError::NameRegistered.into_message(seq))
                         .await;
                 } else {
                     info!("Succesfully registered new client: `{}`", service_name);
 
                     client
-                        .send_message(&service_name, Response::Ok.into())
+                        .send_message(&service_name, Response::Ok.into_message(seq))
                         .await;
                     self.clients.insert(service_name, client);
 
@@ -164,6 +169,7 @@ impl Hub {
         &mut self,
         client_service_name: String,
         target_service_name: String,
+        seq: u64,
     ) {
         trace!(
             "Trying to connect `{}` to the {}",
@@ -182,10 +188,7 @@ impl Hub {
                 );
 
                 self.client(&client_service_name)
-                    .send_message(
-                        &target_service_name,
-                        Response::Error(BusError::NotFound).into(),
-                    )
+                    .send_message(&target_service_name, BusError::NotFound.into_message(seq))
                     .await;
                 return;
             }
@@ -197,10 +200,7 @@ impl Hub {
                 );
 
                 self.client(&client_service_name)
-                    .send_message(
-                        &target_service_name,
-                        Response::Error(BusError::NotAllowed).into(),
-                    )
+                    .send_message(&target_service_name, BusError::NotAllowed.into_message(seq))
                     .await;
                 return;
             }

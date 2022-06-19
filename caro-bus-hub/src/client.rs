@@ -19,7 +19,7 @@ use super::hub::ClientRequest;
 use super::permissions;
 use caro_bus_common::{
     errors::Error as BusError,
-    messages::{self, Message, Response, ServiceRequest},
+    messages::{self, IntoMessage, Message, MessageBody, Response, ServiceRequest},
     net,
 };
 
@@ -92,6 +92,8 @@ impl Client {
                         }
                     },
                     Some(outgoing_message) = client_rx.recv() => {
+                        trace!("Outgoing client message: {:?}", outgoing_message);
+
                         // If Err(_) returned, hub wants to close our connection
                         if let Err(_) = this.write_response_message(&mut socket, outgoing_message).await {
                             drop(socket);
@@ -133,7 +135,8 @@ impl Client {
             counterparty_service_name
         );
 
-        let message = Response::IncomingClientFd(counterparty_service_name.clone()).into();
+        let message =
+            Response::IncomingClientFd(counterparty_service_name.clone()).into_message(999);
 
         if let Err(err) = self.task_tx.send(HubReponse::Fd(message, fd)).await {
             error!(
@@ -152,12 +155,14 @@ impl Client {
     ) -> std::io::Result<()> {
         match outgoing_message {
             HubReponse::Message(message) => {
-                let shutdown = matches!(message, Message::Response(Response::Shutdown));
+                let shutdown = matches!(message.body(), MessageBody::Response(Response::Shutdown));
 
                 if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
                     error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
                     return Err(err);
                 }
+
+                trace!("Successfully sent message to `{}`", self.service_name());
 
                 // Returning error here will drop connection
                 if shutdown {
@@ -206,29 +211,34 @@ impl Client {
     }
 
     // Handle incoming client message
-    async fn handle_client_request(&mut self, message: messages::Message) -> Option<Response> {
+    async fn handle_client_request(&mut self, message: messages::Message) -> Option<Message> {
         trace!(
             "Incoming service `{}` message: {:?}",
             self.service_name.read(),
             message
         );
 
-        if let Message::ServiceRequest(request) = message {
+        if let MessageBody::ServiceRequest(request) = message.body() {
             match request {
                 ServiceRequest::Register {
                     protocol_version,
                     service_name,
                 } => {
-                    self.handle_registration_message(protocol_version, service_name)
-                        .await
+                    self.handle_registration_message(
+                        *protocol_version,
+                        service_name.clone(),
+                        message.seq(),
+                    )
+                    .await
                 }
-                ServiceRequest::Connect { service_name } => {
-                    self.handle_connect_message(service_name).await
+                ServiceRequest::Connect { peer_service_name } => {
+                    self.handle_connect_message(peer_service_name.clone(), message.seq())
+                        .await
                 }
             }
         } else {
             error!("Unexpected data message send to the hub: {:?}", message);
-            Some(Response::Error(BusError::InvalidProtocol))
+            Some(BusError::InvalidProtocol.into_message(message.seq()))
         }
     }
 
@@ -237,10 +247,11 @@ impl Client {
         &mut self,
         protocol_version: i64,
         service_name: String,
-    ) -> Option<Response> {
+        seq: u64,
+    ) -> Option<Message> {
         if protocol_version != messages::PROTOCOL_VERSION {
             warn!("Client with invalid protocol: {}", self.uuid);
-            return Response::Error(BusError::InvalidProtocol).into();
+            return Some(BusError::InvalidProtocol.into_message(seq));
         }
 
         if !permissions::service_name_allowed(&"socket_addr".into(), &service_name) {
@@ -248,7 +259,7 @@ impl Client {
                 "Client is not allowed to register with name `{:?}`",
                 service_name
             );
-            return Response::Error(BusError::InvalidProtocol).into();
+            return Some(BusError::InvalidProtocol.into_message(seq));
         }
 
         // Service requested new service_name. We update our service name here.
@@ -265,7 +276,7 @@ impl Client {
                 protocol_version,
                 service_name,
             }
-            .into(),
+            .into_message(seq),
         )
         .await;
 
@@ -273,19 +284,23 @@ impl Client {
     }
 
     // handle incoming client connection request
-    async fn handle_connect_message(&mut self, service_name: String) -> Option<Response> {
+    async fn handle_connect_message(
+        &mut self,
+        peer_service_name: String,
+        seq: u64,
+    ) -> Option<Message> {
         let self_service_name = self.service_name.read().clone();
 
-        if !permissions::connection_allowed(&self_service_name, &service_name) {
+        if !permissions::connection_allowed(&self_service_name, &peer_service_name) {
             warn!(
                 "Client `{:?}` is not allowed to connect with `{:?}`",
-                self_service_name, service_name
+                self_service_name, peer_service_name
             );
-            return Some(Response::Error(BusError::NotAllowed).into());
+            return Some(BusError::NotAllowed.into_message(seq));
         }
 
         // Notify hub about connection request
-        self.send_message_to_hub(ServiceRequest::Connect { service_name }.into())
+        self.send_message_to_hub(ServiceRequest::Connect { peer_service_name }.into_message(seq))
             .await;
 
         None
@@ -309,7 +324,8 @@ impl Client {
         trace!("Starting shutdown sequence for a client");
 
         // Send request to a hub, asking to delete client handle
-        self.send_message_to_hub(Response::Shutdown.into()).await;
+        self.send_message_to_hub(Response::Shutdown.into_message(999))
+            .await;
         // Do not perform any IO, but wait for a response from the hub
         let message = rx.recv().await.unwrap();
         // Try to send response to a client, if he's still alive
@@ -332,7 +348,7 @@ impl Drop for Client {
 
         let tx = self.task_tx.clone();
         tokio::spawn(async move {
-            tx.send(HubReponse::Shutdown(Response::Shutdown.into()))
+            tx.send(HubReponse::Shutdown(Response::Shutdown.into_message(999)))
                 .await
                 .unwrap();
         });

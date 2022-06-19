@@ -6,6 +6,84 @@ use serde::{Deserialize, Serialize};
 use super::errors;
 
 pub const PROTOCOL_VERSION: i64 = 1;
+const INVALID_SEQ: u64 = 0xDEADBEEF;
+
+pub trait IntoMessage {
+    fn into_message(self, seq: u64) -> Message;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Message {
+    pub(crate) seq: u64,
+    pub(crate) body: MessageBody,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum MessageBody {
+    ServiceRequest(ServiceRequest),
+    Response(Response),
+    MethodCall { method_name: String, params: Bson },
+    MethodSubscription { method_name: String },
+}
+
+impl IntoMessage for MessageBody {
+    fn into_message(self, seq: u64) -> Message {
+        Message { seq, body: self }
+    }
+}
+
+impl Message {
+    pub fn body(&self) -> &MessageBody {
+        &self.body
+    }
+
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    pub fn bytes(self) -> Vec<u8> {
+        bson::to_raw_document_buf(&self).unwrap().into_bytes()
+    }
+
+    pub fn new_registration(service_name: String) -> Self {
+        Self {
+            seq: INVALID_SEQ,
+            body: MessageBody::ServiceRequest(ServiceRequest::Register {
+                protocol_version: PROTOCOL_VERSION,
+                service_name,
+            }),
+        }
+    }
+
+    pub fn new_connection(peer_service_name: String) -> Self {
+        Self {
+            seq: INVALID_SEQ,
+            body: MessageBody::ServiceRequest(ServiceRequest::Connect { peer_service_name }),
+        }
+    }
+
+    pub fn new_call<T: Serialize>(method_name: String, data: &T) -> Self {
+        Self {
+            seq: INVALID_SEQ,
+            body: MessageBody::MethodCall {
+                method_name,
+                params: bson::to_bson(&data).unwrap(),
+            },
+        }
+    }
+
+    pub fn new_subscription(method_name: String) -> Self {
+        Self {
+            seq: INVALID_SEQ,
+            body: MessageBody::MethodSubscription { method_name },
+        }
+    }
+}
+
+pub enum EitherMessage {
+    FullMessage(Message),
+    NeedMoreData(usize),
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ServiceRequest {
@@ -14,13 +92,16 @@ pub enum ServiceRequest {
         service_name: String,
     },
     Connect {
-        service_name: String,
+        peer_service_name: String,
     },
 }
 
-impl Into<Message> for ServiceRequest {
-    fn into(self) -> Message {
-        Message::ServiceRequest(self)
+impl IntoMessage for ServiceRequest {
+    fn into_message(self, seq: u64) -> Message {
+        Message {
+            seq,
+            body: MessageBody::ServiceRequest(self),
+        }
     }
 }
 
@@ -33,59 +114,12 @@ pub enum Response {
     Error(errors::Error),
 }
 
-impl Into<Message> for Response {
-    fn into(self) -> Message {
-        Message::Response(self)
-    }
-}
-
-impl Response {
-    pub fn bytes(self) -> Vec<u8> {
-        let message: Message = self.into();
-        message.bytes()
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Message {
-    ServiceRequest(ServiceRequest),
-    Response(Response),
-    MethodCall { method_name: String, params: Bson },
-    MethodSubscription { method_name: String },
-}
-
-impl Message {
-    pub fn bytes(self) -> Vec<u8> {
-        bson::to_raw_document_buf(&self).unwrap().into_bytes()
-    }
-}
-
-pub enum EitherMessage {
-    FullMessage(Message),
-    NeedMoreData(usize),
-}
-
-pub fn make_register_message(service_name: String) -> Message {
-    Message::ServiceRequest(ServiceRequest::Register {
-        protocol_version: PROTOCOL_VERSION,
-        service_name,
-    })
-}
-
-pub fn make_connection_message(service_name: String) -> Message {
-    Message::ServiceRequest(ServiceRequest::Connect { service_name })
-}
-
-pub fn make_call_message<T: Serialize>(method_name: &str, data: &T) -> Message {
-    Message::MethodCall {
-        method_name: String::from(method_name),
-        params: bson::to_bson(&data).unwrap(),
-    }
-}
-
-pub fn make_subscription_message(method_name: &str) -> Message {
-    Message::MethodSubscription {
-        method_name: String::from(method_name),
+impl IntoMessage for Response {
+    fn into_message(self, seq: u64) -> Message {
+        Message {
+            seq,
+            body: MessageBody::Response(self),
+        }
     }
 }
 

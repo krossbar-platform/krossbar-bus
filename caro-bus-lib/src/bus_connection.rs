@@ -26,11 +26,11 @@ use super::{
     //method::{Method, MethodCall, MethodTrait},
     peer_connection::PeerConnection,
     utils,
-    CallbackType,
 };
 use caro_bus_common::{
+    call_registry::CallRegistry,
     errors::Error as BusError,
-    messages::{self, Message, Response, ServiceRequest},
+    messages::{self, IntoMessage, Message, MessageBody, Response, ServiceRequest},
     net, HUB_SOCKET_PATH,
 };
 
@@ -52,7 +52,9 @@ pub struct BusConnection {
     /// receive a result from a callback
     methods: Shared<HashMap<String, Sender<MethodCall>>>,
     /// Sender to make calls into the task
-    task_tx: Sender<(Message, OneSender<CallbackType>)>,
+    task_tx: Sender<(Message, OneSender<Message>)>,
+    /// Registry to make calls and send responses to proper callers
+    call_registry: CallRegistry,
 }
 
 impl BusConnection {
@@ -68,6 +70,7 @@ impl BusConnection {
             connected_services: Arc::new(RwLock::new(HashMap::new())),
             methods: Arc::new(RwLock::new(HashMap::new())),
             task_tx,
+            call_registry: CallRegistry::new(),
         };
 
         let mut socket = BusConnection::connect_to_hub().await?;
@@ -86,25 +89,29 @@ impl BusConnection {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // First connect to a socket
         let self_name = self.service_name.read().clone();
+        debug!("Performing service `{}` registration", self_name);
 
-        let request = messages::make_register_message(self_name.clone());
+        let (tx, rx) = oneshot::channel();
 
-        // Send connection request and wait for a response
-        match utils::send_receive_message(socket, request).await {
-            Ok(Message::Response(Response::Ok)) => {
+        // Make a message and send to the hub
+        let message = Message::new_registration(self_name.clone());
+        self.call_registry.call(socket, message, tx).await?;
+
+        // Wait for response
+        match rx.await?.body() {
+            MessageBody::Response(Response::Ok) => {
                 info!("Succesfully registered service as `{}`", self_name);
 
                 Ok(())
             }
-            Ok(Message::Response(Response::Error(err))) => {
+            MessageBody::Response(Response::Error(err)) => {
                 warn!("Failed to register service as `{}`: {}", self_name, err);
-                return Err(Box::new(err));
+                return Err(Box::new(BusError::NotAllowed));
             }
-            Ok(m) => {
+            m => {
                 error!("Invalid response from the hub: {:?}", m);
                 return Err(Box::new(BusError::InvalidProtocol));
             }
-            Err(err) => return Err(err),
         }
     }
 
@@ -140,7 +147,7 @@ impl BusConnection {
     fn start_task(
         &mut self,
         mut socket: UnixStream,
-        mut task_rx: Receiver<(Message, OneSender<CallbackType>)>,
+        mut task_rx: Receiver<(Message, OneSender<Message>)>,
     ) {
         let mut this = self.clone();
 
@@ -153,9 +160,39 @@ impl BusConnection {
                     read_result = net::read_message(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
-                                if let Some(response) = this.handle_bus_message(message, &mut socket).await {
-                                socket.write_all(response.bytes().as_slice()).await.unwrap();
-                            }},
+                                trace!("Got a message from the hub: {:?}", message);
+                                let response_seq = message.seq();
+
+                                match message.body() {
+                                    MessageBody::Response(Response::IncomingClientFd(peer_service_name)) =>
+                                    {
+                                        this.receive_and_register_peer_fd(peer_service_name.clone(), &mut socket)
+                                        .await.unwrap();
+                                        this.call_registry.resolve(message)
+                                    }
+                                    // If got a response to a call, handle it by call_registry. Otherwise it's
+                                    // an incoming call. Use [handle_bus_message]
+                                    MessageBody::Response(_) =>
+                                    {
+                                        this.call_registry.resolve(message)
+                                    },
+                                    _ => if let Some(response) = this.handle_bus_message(message, &mut socket).await {
+                                        let message = response.into_message(response_seq);
+
+                                        if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
+                                            warn!("Hub closed its socket: {}. Trying to reconnect", err.to_string());
+
+                                            match this.reconnect().await {
+                                                Ok(new_socket) => socket = new_socket,
+                                                Err(err) => {
+                                                    error!("Failed to reconnect to a hub: {}", err.to_string());
+                                                    return
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
                             Err(err) => {
                                 warn!("Hub closed its socket: {}. Trying to reconnect", err.to_string());
 
@@ -172,14 +209,18 @@ impl BusConnection {
                     Some((request, callback_tx)) = task_rx.recv() => {
                         trace!("Service task message: {:?}", request);
 
-                        match request {
-                            Message::ServiceRequest(ServiceRequest::Connect { service_name }) => {
-                                callback_tx.send(this.perfom_service_connection(service_name, &mut socket).await).unwrap();
+                        match request.body() {
+                            MessageBody::ServiceRequest(ServiceRequest::Connect { .. }) => {
+                                if let Err(_) = this.call_registry.call(&mut socket, request, callback_tx).await {
+                                    info!("Service connection received shutdown request");
+                                    drop(socket);
+                                    return
+                                }
                             },
                             // Someone wants us to shutdown
-                            Message::Response(Response::Shutdown) => {
+                            MessageBody::Response(Response::Shutdown) => {
                                 info!("Service connection received shutdown request");
-                                callback_tx.send(Ok(Response::Ok.into())).unwrap();
+                                callback_tx.send(Response::Ok.into_message(999)).unwrap();
 
                                 drop(socket);
                                 return
@@ -192,8 +233,10 @@ impl BusConnection {
         });
     }
 
-    /// Connect to a service. This call is asynchronous and may fail.
-    /// See perfom_service_connection for connection sequence
+    /// Perform connection to an another service.
+    /// The method may fail if:
+    /// 1. The service is not allowed to connect to a target service
+    /// 2. Target service is not registered
     pub async fn connect(
         &mut self,
         peer_service_name: String,
@@ -207,15 +250,38 @@ impl BusConnection {
             .read()
             .contains_key(&peer_service_name)
         {
-            let _ = utils::call_task(
+            match utils::call_task(
                 &self.task_tx,
-                ServiceRequest::Connect {
-                    service_name: peer_service_name.clone(),
-                }
-                .into(),
+                Message::new_connection(peer_service_name.clone()),
             )
             .await
-            .map_err(|e| e as Box<dyn Error>)?;
+            .map_err(|e| e as Box<dyn Error>)?
+            .body()
+            {
+                // Client can receive two types of responses for a connection request:
+                // 1. Response::Error if service is not allowed to connect
+                // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
+                // Handle second case next
+                MessageBody::Response(Response::IncomingClientFd(peer_service_name)) => {
+                    info!("Received connection confirmation to `{}` from the hub. Tring to receive peer socket",
+                        peer_service_name);
+                }
+                // Hub doesn't allow connection
+                MessageBody::Response(Response::Error(err)) => {
+                    // This is an invalid
+                    warn!(
+                        "Failed to register service as `{}`: {}",
+                        self.service_name.read(),
+                        err
+                    );
+                    return Err(Box::new(BusError::NotAllowed));
+                }
+                // Invalid protocol here
+                m => {
+                    error!("Invalid response from the hub: {:?}", m);
+                    return Err(Box::new(BusError::InvalidProtocol));
+                }
+            }
         }
 
         // We either already had connection, or just created one, so we can
@@ -293,7 +359,7 @@ impl BusConnection {
                 method_name
             );
 
-            return Err(Box::new(BusError::MethodRegistered));
+            return Err(Box::new(BusError::MethodNotRegistered));
         }
 
         let (tx, rx) = mpsc::channel(32);
@@ -307,12 +373,14 @@ impl BusConnection {
         &self,
         message: messages::Message,
     ) -> Result<Message, Box<dyn Error + Send + Sync>> {
-        match message {
+        match message.body() {
             // Method call
-            Message::MethodCall {
+            MessageBody::MethodCall {
                 method_name,
                 params,
-            } => Ok(self.handle_method_call(method_name, params).await),
+            } => Ok(self
+                .handle_method_call(method_name, params, message.seq())
+                .await),
             m => {
                 error!("Invalid incoming message from library client: {:?}", m);
                 Err(BusError::InvalidProtocol.into())
@@ -326,70 +394,20 @@ impl BusConnection {
         self.connected_services.write().remove(&peer_name);
     }
 
-    /// Perform connection to an another service.
-    /// The method may fail if:
-    /// 1. The service is not allowed to connect to a target service
-    /// 2. Target service is not registered
-    async fn perfom_service_connection(
-        &self,
-        target_service_name: String,
-        socket: &mut UnixStream,
-    ) -> Result<Message, Box<dyn Error + Sync + Send>> {
-        let request = ServiceRequest::Connect {
-            service_name: target_service_name.clone(),
-        }
-        .into();
-
-        // Send connection message and receive response
-        match utils::send_receive_message(socket, request).await {
-            // Client can receive two types of responses for a connection request:
-            // 1. Response::Error if service is not allowed to connect
-            // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
-            // Handle second case next
-            Ok(Message::Response(Response::IncomingClientFd(_))) => {
-                info!(
-                    "Received connection confirmation to `{}` from the hub. Tring to receive peer socket",
-                    target_service_name
-                );
-
-                self.receive_and_register_peer_fd(target_service_name, socket)
-                    .await
-            }
-            // Hub doesn't allow connection
-            Ok(Message::Response(Response::Error(err))) => {
-                // This is an invalid
-                warn!(
-                    "Failed to register service as `{}`: {}",
-                    self.service_name.read(),
-                    err
-                );
-                Err(Box::new(err))
-            }
-            // Invalid protocol here
-            Ok(m) => {
-                error!("Invalid response from the hub: {:?}", m);
-                Err(Box::new(BusError::InvalidProtocol))
-            }
-            // Network error
-            // TODO: Close client connection
-            Err(err) => Err(err),
-        }
-    }
-
     /// Handle incoming method call
-    async fn handle_method_call(&self, method_name: String, params: Bson) -> Message {
-        let method = self.methods.read().get(&method_name).cloned();
+    async fn handle_method_call(&self, method_name: &String, params: &Bson, seq: u64) -> Message {
+        let method = self.methods.read().get(method_name).cloned();
 
         if let Some(method) = method {
             // Create oneshot channel to receive response
             let (tx, rx) = oneshot::channel();
 
             // Call user
-            method.send((params, tx)).await.unwrap();
+            method.send((params.clone(), tx)).await.unwrap();
             // Await for his respons
-            rx.await.unwrap().into()
+            rx.await.unwrap().into_message(seq)
         } else {
-            BusError::MethodRegistered.into()
+            BusError::MethodNotRegistered.into_message(seq)
         }
     }
 
@@ -401,14 +419,14 @@ impl BusConnection {
     ) -> Option<Response> {
         trace!("Incoming bus message: {:?}", message);
 
-        if let Message::Response(request) = message {
+        if let MessageBody::Response(request) = message.body() {
             match request {
                 // Incoming connection request. Connection socket FD will be coming next
-                Response::IncomingClientFd(service_name) => {
+                Response::IncomingClientFd(peer_service_name) => {
                     trace!("Received peer connection message from the hub. Trying to receive peer socket");
 
                     if let Err(err) = self
-                        .receive_and_register_peer_fd(service_name, socket)
+                        .receive_and_register_peer_fd(peer_service_name.clone(), socket)
                         .await
                     {
                         error!(
@@ -453,7 +471,7 @@ impl BusConnection {
                     .unwrap()
                     .insert(peer_service_name, new_service_connection);
 
-                Ok(Message::Response(Response::Ok))
+                Ok(Response::Ok.into_message(999))
             }
             Err(err) => {
                 error!("Failed to receive peer socket: {:?}", err);
@@ -472,7 +490,7 @@ impl BusConnection {
             peer.close().await
         }
 
-        utils::call_task(&self.task_tx, Response::Shutdown.into())
+        utils::call_task(&self.task_tx, Response::Shutdown.into_message(999))
             .await
             .unwrap();
     }

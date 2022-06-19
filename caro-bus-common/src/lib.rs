@@ -1,3 +1,4 @@
+pub mod call_registry;
 pub mod errors;
 pub mod messages;
 pub mod net;
