@@ -67,7 +67,7 @@ impl PeerConnection {
 
                                         if let Err(_) = socket.write_all(response.bytes().as_slice()).await {
                                             let peer_name = this.peer_service_name.read().clone();
-                                            error!("Failed to write peer `{}` response. Shutting him down", peer_name);
+                                            warn!("Failed to write peer `{}` response. Shutting him down", peer_name);
 
                                             this.bus.remove_peer(peer_name);
                                             drop(socket);
@@ -78,7 +78,7 @@ impl PeerConnection {
                             },
                             Err(_) => {
                                 let peer_name = this.peer_service_name.read().clone();
-                                error!("Failed to read peer `{}` message. Shutting him down", peer_name);
+                                warn!("Failed to read peer `{}` message. Shutting him down", peer_name);
 
                                 this.bus.remove_peer(peer_name);
                                 drop(socket);
@@ -102,7 +102,7 @@ impl PeerConnection {
                             },
                             MessageBody::Response(Response::Shutdown) => {
                                 let peer_name = this.peer_service_name.read().clone();
-                                error!("Peer connection `{}` received shutdown request",  peer_name);
+                                info!("Peer connection `{}` received shutdown request",  peer_name);
                                 callback_tx.send(Response::Ok.into_message(999)).unwrap();
 
                                 drop(socket);

@@ -462,6 +462,10 @@ impl BusConnection {
                 trace!("Succesfully received peer socket from the hub");
 
                 let os_stream = unsafe { OsStream::from_raw_fd(peer_fd) };
+                // Should not forget about making non-blocking.
+                // This cost me two days of life
+                os_stream.set_nonblocking(true)?;
+
                 let incoming_socket = UnixStream::from_std(os_stream).unwrap();
 
                 // Create new service connection handle. Can be used to handle own
