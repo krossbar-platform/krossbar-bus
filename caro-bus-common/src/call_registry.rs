@@ -73,4 +73,8 @@ impl CallRegistry {
             }
         }
     }
+
+    pub fn has_call(&self, seq: u64) -> bool {
+        self.calls.read().contains_key(&seq)
+    }
 }

@@ -30,7 +30,7 @@ use super::{
 use caro_bus_common::{
     call_registry::CallRegistry,
     errors::Error as BusError,
-    messages::{self, IntoMessage, Message, MessageBody, Response, ServiceRequest},
+    messages::{self, IntoMessage, Message, MessageBody, Response, ServiceMessage},
     net, HUB_SOCKET_PATH,
 };
 
@@ -74,7 +74,8 @@ impl BusConnection {
         };
 
         let mut socket = BusConnection::connect_to_hub().await?;
-        this.perform_registration(&mut socket).await?;
+
+        this.hub_register(&mut socket).await?;
 
         // Start tokio task to handle incoming messages
         this.start_task(socket, rx);
@@ -83,7 +84,9 @@ impl BusConnection {
     }
 
     /// Connect to a hub socket and send registration request
-    async fn perform_registration(
+    /// This method is blocking from the library workflow perspectire: we can't make any hub
+    /// calls without previous registration
+    async fn hub_register(
         &mut self,
         socket: &mut UnixStream,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -91,14 +94,13 @@ impl BusConnection {
         let self_name = self.service_name.read().clone();
         debug!("Performing service `{}` registration", self_name);
 
-        let (tx, rx) = oneshot::channel();
-
         // Make a message and send to the hub
         let message = Message::new_registration(self_name.clone());
-        self.call_registry.call(socket, message, tx).await?;
+        socket.write_all(message.bytes().as_slice()).await?;
 
-        // Wait for response
-        match rx.await?.body() {
+        let mut bytes = BytesMut::with_capacity(64);
+        // Wait for hub response
+        match net::read_message(socket, &mut bytes).await?.body() {
             MessageBody::Response(Response::Ok) => {
                 info!("Succesfully registered service as `{}`", self_name);
 
@@ -131,7 +133,7 @@ impl BusConnection {
                     info!("Succesfully reconnected to the hub");
 
                     // Try to connect and register
-                    return self.perform_registration(&mut socket).await.and(Ok(socket));
+                    return self.hub_register(&mut socket).await.and(Ok(socket));
                 }
                 Err(_) => {
                     debug!("Failed to reconnect to a hub socket. Will try again");
@@ -164,11 +166,15 @@ impl BusConnection {
                                 let response_seq = message.seq();
 
                                 match message.body() {
-                                    MessageBody::Response(Response::IncomingClientFd(peer_service_name)) =>
+                                    MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd { peer_service_name }) =>
                                     {
+                                        trace!("Incoming file descriptor for a peer: {}", peer_service_name);
                                         this.receive_and_register_peer_fd(peer_service_name.clone(), &mut socket)
                                         .await.unwrap();
-                                        this.call_registry.resolve(message)
+
+                                        if this.call_registry.has_call(message.seq()) {
+                                            this.call_registry.resolve(message);
+                                        }
                                     }
                                     // If got a response to a call, handle it by call_registry. Otherwise it's
                                     // an incoming call. Use [handle_bus_message]
@@ -210,7 +216,7 @@ impl BusConnection {
                         trace!("Service task message: {:?}", request);
 
                         match request.body() {
-                            MessageBody::ServiceRequest(ServiceRequest::Connect { .. }) => {
+                            MessageBody::ServiceMessage(ServiceMessage::Connect { .. }) => {
                                 if let Err(_) = this.call_registry.call(&mut socket, request, callback_tx).await {
                                     info!("Service connection received shutdown request");
                                     drop(socket);
@@ -262,7 +268,7 @@ impl BusConnection {
                 // 1. Response::Error if service is not allowed to connect
                 // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
                 // Handle second case next
-                MessageBody::Response(Response::IncomingClientFd(peer_service_name)) => {
+                MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd { .. }) => {
                     info!("Received connection confirmation to `{}` from the hub. Tring to receive peer socket",
                         peer_service_name);
                 }
@@ -419,28 +425,28 @@ impl BusConnection {
     ) -> Option<Response> {
         trace!("Incoming bus message: {:?}", message);
 
-        if let MessageBody::Response(request) = message.body() {
-            match request {
-                // Incoming connection request. Connection socket FD will be coming next
-                Response::IncomingClientFd(peer_service_name) => {
-                    trace!("Received peer connection message from the hub. Trying to receive peer socket");
+        match message.body() {
+            // Incoming connection request. Connection socket FD will be coming next
+            MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd { peer_service_name }) => {
+                trace!(
+                    "Received peer connection message from the hub. Trying to receive peer socket"
+                );
 
-                    if let Err(err) = self
-                        .receive_and_register_peer_fd(peer_service_name.clone(), socket)
-                        .await
-                    {
-                        error!(
-                            "Failed to receive peer file descriptor: {}",
-                            err.to_string()
-                        );
-                    }
+                if let Err(err) = self
+                    .receive_and_register_peer_fd(peer_service_name.clone(), socket)
+                    .await
+                {
+                    error!(
+                        "Failed to receive peer file descriptor: {}",
+                        err.to_string()
+                    );
                 }
-                Response::Error(err) => error!("Hub send us an error: {:?}", err),
-                m => error!("Invalid message from the hub: {:?}", m),
             }
-        } else {
-            error!("Invalid message from the hub: {:?}", message);
-        }
+            MessageBody::Response(Response::Error(err)) => {
+                error!("Hub send us an error: {:?}", err)
+            }
+            m => error!("Invalid message from the hub: {:?}", m),
+        };
 
         None
     }

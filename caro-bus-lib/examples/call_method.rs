@@ -21,5 +21,11 @@ async fn main() {
     let call_result: String = peer_connection.call(&"method".into(), &42).await.unwrap();
     debug!("Method call result: {}", call_result);
 
+    let call_result: String = peer_connection.call(&"method".into(), &11).await.unwrap();
+    debug!("Method call result: {}", call_result);
+
+    let call_result: String = peer_connection.call(&"method".into(), &69).await.unwrap();
+    debug!("Method call result: {}", call_result);
+
     bus.close().await
 }

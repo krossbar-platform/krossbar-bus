@@ -20,7 +20,7 @@ pub struct Message {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum MessageBody {
-    ServiceRequest(ServiceRequest),
+    ServiceMessage(ServiceMessage),
     Response(Response),
     MethodCall { method_name: String, params: Bson },
     MethodSubscription { method_name: String },
@@ -48,7 +48,7 @@ impl Message {
     pub fn new_registration(service_name: String) -> Self {
         Self {
             seq: INVALID_SEQ,
-            body: MessageBody::ServiceRequest(ServiceRequest::Register {
+            body: MessageBody::ServiceMessage(ServiceMessage::Register {
                 protocol_version: PROTOCOL_VERSION,
                 service_name,
             }),
@@ -58,7 +58,7 @@ impl Message {
     pub fn new_connection(peer_service_name: String) -> Self {
         Self {
             seq: INVALID_SEQ,
-            body: MessageBody::ServiceRequest(ServiceRequest::Connect { peer_service_name }),
+            body: MessageBody::ServiceMessage(ServiceMessage::Connect { peer_service_name }),
         }
     }
 
@@ -86,21 +86,24 @@ pub enum EitherMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum ServiceRequest {
+pub enum ServiceMessage {
+    /// Client sends message to Hub to resister with *service_name*
     Register {
         protocol_version: i64,
         service_name: String,
     },
-    Connect {
-        peer_service_name: String,
-    },
+    /// Client sends message to Hub to connect to *peer_service_name*
+    Connect { peer_service_name: String },
+    /// If one Client performs connection, other Client receives this message to make
+    /// p2p connection. Right after the messge we need to red peer UDS file descriptor
+    IncomingPeerFd { peer_service_name: String },
 }
 
-impl IntoMessage for ServiceRequest {
+impl IntoMessage for ServiceMessage {
     fn into_message(self, seq: u64) -> Message {
         Message {
             seq,
-            body: MessageBody::ServiceRequest(self),
+            body: MessageBody::ServiceMessage(self),
         }
     }
 }
@@ -109,7 +112,6 @@ impl IntoMessage for ServiceRequest {
 pub enum Response {
     Ok,
     Shutdown,
-    IncomingClientFd(String),
     Return(Bson),
     Error(errors::Error),
 }

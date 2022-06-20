@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs, os::unix::net::UnixStream as OsUnixStream};
 
 use caro_bus_common::{
     errors::Error as BusError,
-    messages::{IntoMessage, Message, MessageBody, Response, ServiceRequest},
+    messages::{IntoMessage, Message, MessageBody, Response, ServiceMessage},
     HUB_SOCKET_PATH,
 };
 use log::*;
@@ -94,7 +94,7 @@ impl Hub {
 
     async fn handle_client_call(&mut self, request: ClientRequest) {
         match request.message.body() {
-            MessageBody::ServiceRequest(ServiceRequest::Register {
+            MessageBody::ServiceMessage(ServiceMessage::Register {
                 protocol_version: _,
                 service_name,
             }) => {
@@ -105,7 +105,7 @@ impl Hub {
                 )
                 .await
             }
-            MessageBody::ServiceRequest(ServiceRequest::Connect { peer_service_name }) => {
+            MessageBody::ServiceMessage(ServiceMessage::Connect { peer_service_name }) => {
                 self.handle_new_connection_request(
                     request.service_name,
                     peer_service_name.clone(),
@@ -167,13 +167,13 @@ impl Hub {
 
     async fn handle_new_connection_request(
         &mut self,
-        client_service_name: String,
+        requester_service_name: String,
         target_service_name: String,
         seq: u64,
     ) {
         trace!(
             "Trying to connect `{}` to the {}",
-            client_service_name,
+            requester_service_name,
             target_service_name
         );
 
@@ -184,41 +184,50 @@ impl Hub {
             if !self.clients.contains_key(&target_service_name) {
                 warn!(
                     "Failed to find a service `{:?}` to connect with `{:?}`",
-                    target_service_name, client_service_name
+                    target_service_name, requester_service_name
                 );
 
-                self.client(&client_service_name)
+                self.client(&requester_service_name)
                     .send_message(&target_service_name, BusError::NotFound.into_message(seq))
                     .await;
                 return;
             }
 
-            if client_service_name == target_service_name {
+            if requester_service_name == target_service_name {
                 warn!(
                     "Service `{:?}` tries to connect to himself",
                     target_service_name,
                 );
 
-                self.client(&client_service_name)
+                self.client(&requester_service_name)
                     .send_message(&target_service_name, BusError::NotAllowed.into_message(seq))
                     .await;
                 return;
             }
 
             // Send descriptor to the requester
-            self.client(&client_service_name)
-                .send_connection_fd(&target_service_name, left)
+            let message = ServiceMessage::IncomingPeerFd {
+                peer_service_name: target_service_name.clone(),
+            }
+            .into_message(seq);
+            self.client(&requester_service_name)
+                .send_connection_fd(message, &target_service_name, left)
                 .await;
         }
 
         // Send descriptor to the target service
+        // NOTE: It's duplicates, but it's possible that hub will send different message
+        let message = ServiceMessage::IncomingPeerFd {
+            peer_service_name: requester_service_name.clone(),
+        }
+        .into_message(seq);
         self.client(&target_service_name)
-            .send_connection_fd(&client_service_name, right)
+            .send_connection_fd(message, &requester_service_name, right)
             .await;
 
         info!(
             "Succesfully connected `{}` to `{}`",
-            client_service_name, target_service_name
+            requester_service_name, target_service_name
         )
     }
 

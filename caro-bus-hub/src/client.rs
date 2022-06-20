@@ -19,7 +19,7 @@ use super::hub::ClientRequest;
 use super::permissions;
 use caro_bus_common::{
     errors::Error as BusError,
-    messages::{self, IntoMessage, Message, MessageBody, Response, ServiceRequest},
+    messages::{self, IntoMessage, Message, MessageBody, Response, ServiceMessage},
     net,
 };
 
@@ -126,22 +126,20 @@ impl Client {
     // Request to send connection fd to a client
     pub async fn send_connection_fd(
         &mut self,
-        counterparty_service_name: &String,
+        message: Message,
+        peer_service_name: &String,
         fd: OsUnixStream,
     ) {
         debug!(
             "Incoming socket descriptor for a service `{}` from `{}`",
             self.service_name(),
-            counterparty_service_name
+            peer_service_name
         );
-
-        let message =
-            Response::IncomingClientFd(counterparty_service_name.clone()).into_message(999);
 
         if let Err(err) = self.task_tx.send(HubReponse::Fd(message, fd)).await {
             error!(
                 "Failed to send socket descriptor to the client `{}`: {}",
-                counterparty_service_name,
+                peer_service_name,
                 err.to_string()
             );
         }
@@ -218,9 +216,9 @@ impl Client {
             message
         );
 
-        if let MessageBody::ServiceRequest(request) = message.body() {
+        if let MessageBody::ServiceMessage(request) = message.body() {
             match request {
-                ServiceRequest::Register {
+                ServiceMessage::Register {
                     protocol_version,
                     service_name,
                 } => {
@@ -231,9 +229,13 @@ impl Client {
                     )
                     .await
                 }
-                ServiceRequest::Connect { peer_service_name } => {
+                ServiceMessage::Connect { peer_service_name } => {
                     self.handle_connect_message(peer_service_name.clone(), message.seq())
                         .await
+                }
+                m => {
+                    warn!("Invalid message from a client: {:?}", m);
+                    None
                 }
             }
         } else {
@@ -272,7 +274,7 @@ impl Client {
         );
 
         self.send_message_to_hub(
-            ServiceRequest::Register {
+            ServiceMessage::Register {
                 protocol_version,
                 service_name,
             }
@@ -300,7 +302,7 @@ impl Client {
         }
 
         // Notify hub about connection request
-        self.send_message_to_hub(ServiceRequest::Connect { peer_service_name }.into_message(seq))
+        self.send_message_to_hub(ServiceMessage::Connect { peer_service_name }.into_message(seq))
             .await;
 
         None
