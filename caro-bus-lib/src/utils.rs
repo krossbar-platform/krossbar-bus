@@ -1,19 +1,30 @@
-use std::error::Error;
+use std::{error::Error, io::ErrorKind};
 
-use tokio::sync::{
-    mpsc::Sender,
-    oneshot::{self, Sender as OneSender},
-};
+use log::error;
+use tokio::sync::mpsc::{self, Sender};
 
 use caro_bus_common::messages::Message;
 
+pub(crate) type TaskResponse = Message;
+pub(crate) type TaskCall = (Message, Sender<TaskResponse>);
+pub(crate) type TaskChannel = Sender<TaskCall>;
+
 /// Send message request into mpsc channel and wait for the result
 pub async fn call_task(
-    task_tx: &Sender<(Message, OneSender<Message>)>,
+    task_tx: &Sender<(Message, Sender<Message>)>,
     message: Message,
 ) -> Result<Message, Box<dyn Error + Send + Sync>> {
-    let (one_tx, one_rx) = oneshot::channel();
+    let (tx, mut rx) = mpsc::channel(10);
 
-    task_tx.send((message, one_tx)).await?;
-    Ok(one_rx.await?)
+    task_tx.send((message, tx)).await?;
+    match rx.recv().await {
+        Some(message) => Ok(message),
+        None => {
+            error!("Failed to receive response from a task. Channel closed");
+            Err(Box::new(std::io::Error::new(
+                ErrorKind::BrokenPipe,
+                "Channel closed",
+            )))
+        }
+    }
 }

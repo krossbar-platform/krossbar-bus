@@ -153,7 +153,8 @@ impl Client {
     ) -> std::io::Result<()> {
         match outgoing_message {
             HubReponse::Message(message) => {
-                let shutdown = matches!(message.body(), MessageBody::Response(Response::Shutdown));
+                let shutdown =
+                    matches!(message.body(), MessageBody::Response(Response::Shutdown(_)));
 
                 if let Err(err) = socket.write_all(message.bytes().as_slice()).await {
                     error!("Failed to write into a socket: {}. Client is disconnected. Shutting him down", err.to_string());
@@ -326,7 +327,7 @@ impl Client {
         trace!("Starting shutdown sequence for a client");
 
         // Send request to a hub, asking to delete client handle
-        self.send_message_to_hub(Response::Shutdown.into_message(999))
+        self.send_message_to_hub(Response::Shutdown("".into()).into_message(999))
             .await;
         // Do not perform any IO, but wait for a response from the hub
         let message = rx.recv().await.unwrap();
@@ -339,6 +340,7 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
+        let self_name = self.service_name.read().clone();
         if self.task_tx.is_closed() {
             return;
         }
@@ -350,9 +352,11 @@ impl Drop for Client {
 
         let tx = self.task_tx.clone();
         tokio::spawn(async move {
-            tx.send(HubReponse::Shutdown(Response::Shutdown.into_message(999)))
-                .await
-                .unwrap();
+            tx.send(HubReponse::Shutdown(
+                Response::Shutdown(self_name).into_message(999),
+            ))
+            .await
+            .unwrap();
         });
     }
 }

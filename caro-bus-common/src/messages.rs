@@ -12,18 +12,25 @@ pub trait IntoMessage {
     fn into_message(self, seq: u64) -> Message;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub(crate) seq: u64,
     pub(crate) body: MessageBody,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum MessageBody {
     ServiceMessage(ServiceMessage),
     Response(Response),
-    MethodCall { method_name: String, params: Bson },
-    MethodSubscription { method_name: String },
+    MethodCall {
+        caller_name: String,
+        method_name: String,
+        params: Bson,
+    },
+    SignalSubscription {
+        subscriber_name: String,
+        signal_name: String,
+    },
 }
 
 impl IntoMessage for MessageBody {
@@ -62,20 +69,24 @@ impl Message {
         }
     }
 
-    pub fn new_call<T: Serialize>(method_name: String, data: &T) -> Self {
+    pub fn new_call<T: Serialize>(caller_name: String, method_name: String, data: &T) -> Self {
         Self {
             seq: INVALID_SEQ,
             body: MessageBody::MethodCall {
+                caller_name,
                 method_name,
                 params: bson::to_bson(&data).unwrap(),
             },
         }
     }
 
-    pub fn new_subscription(method_name: String) -> Self {
+    pub fn new_subscription(subscriber_name: String, signal_name: String) -> Self {
         Self {
             seq: INVALID_SEQ,
-            body: MessageBody::MethodSubscription { method_name },
+            body: MessageBody::SignalSubscription {
+                subscriber_name,
+                signal_name,
+            },
         }
     }
 }
@@ -85,7 +96,7 @@ pub enum EitherMessage {
     NeedMoreData(usize),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceMessage {
     /// Client sends message to Hub to resister with *service_name*
     Register {
@@ -108,11 +119,12 @@ impl IntoMessage for ServiceMessage {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Response {
     Ok,
-    Shutdown,
+    Shutdown(String),
     Return(Bson),
+    Signal(Bson),
     Error(errors::Error),
 }
 

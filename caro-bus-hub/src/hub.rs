@@ -113,7 +113,7 @@ impl Hub {
                 )
                 .await
             }
-            MessageBody::Response(Response::Shutdown) => {
+            MessageBody::Response(Response::Shutdown(_)) => {
                 self.handle_disconnection(&request.uuid, &request.service_name)
                     .await;
             }
