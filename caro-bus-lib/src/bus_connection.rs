@@ -16,9 +16,9 @@ use tokio::{
     io::AsyncWriteExt,
     net::UnixStream,
     sync::{
+        broadcast::{self, Sender as BroadcastSender},
         mpsc::{self, Receiver, Sender},
         oneshot::{self, Sender as OneSender},
-        watch::{self, Receiver as WatchReceiver},
     },
     time,
 };
@@ -56,7 +56,7 @@ pub struct BusConnection {
     methods: Shared<HashMap<String, Sender<MethodCall>>>,
     /// Registered methods. Sender is used to notify users
     /// about signals
-    signals: Shared<HashMap<String, WatchReceiver<Message>>>,
+    signals: Shared<HashMap<String, BroadcastSender<Message>>>,
     /// Sender to make calls into the task
     task_tx: TaskChannel,
     /// Sender to shutdown bus connection
@@ -227,8 +227,7 @@ impl BusConnection {
                 // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
                 // Handle second case next
                 MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd { .. }) => {
-                    info!("Received connection confirmation to `{}` from the hub. Tring to receive peer socket",
-                        peer_service_name);
+                    info!("Connection to `{}` succeded", peer_service_name);
                 }
                 // Hub doesn't allow connection
                 MessageBody::Response(Response::Error(err)) => {
@@ -344,6 +343,8 @@ impl BusConnection {
         let (tx, rx) = mpsc::channel(32);
 
         methods.insert(method_name.clone(), tx);
+
+        info!("Succesfully registered method: {}", method_name);
         Ok(rx)
     }
 
@@ -362,9 +363,11 @@ impl BusConnection {
             return Err(Box::new(BusError::AlreadyRegistered));
         }
 
-        let (tx, rx) = watch::channel(Response::Ok.into_message(0xFEEDC0DE));
+        let (tx, _rx) = broadcast::channel(5);
 
-        signals.insert(signal_name.clone(), rx);
+        signals.insert(signal_name.clone(), tx.clone());
+
+        info!("Succesfully registered signal: {}", signal_name);
         Ok(Signal::new(signal_name.clone(), tx))
     }
 
@@ -447,11 +450,11 @@ impl BusConnection {
     ) -> Message {
         let signal = self.signals.read().get(signal_name).cloned();
 
-        if let Some(signal_receiver) = signal {
+        if let Some(signal_sender) = signal {
             // Find subscriber
             match self.peers.read().get(caller_name) {
                 Some(caller) => {
-                    caller.start_signal_sending_task(signal_receiver);
+                    caller.start_signal_sending_task(signal_sender.subscribe(), seq);
                     Response::Ok.into_message(seq)
                 }
                 None => BusError::InvalidProtocol.into_message(seq),
@@ -524,6 +527,7 @@ impl BusConnection {
                 // Create new service connection handle. Can be used to handle own
                 // connection requests by just returning already existing handle
                 let new_service_connection = PeerConnection::new(
+                    self.service_name.read().clone(),
                     peer_service_name.clone(),
                     incoming_socket,
                     self.task_tx.clone(),

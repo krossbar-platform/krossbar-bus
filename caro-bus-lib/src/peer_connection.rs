@@ -8,8 +8,8 @@ use tokio::{
     io::AsyncWriteExt,
     net::UnixStream,
     sync::{
+        broadcast::Receiver as BroadcastReceiver,
         mpsc::{self, Receiver, Sender},
-        watch::Receiver as WatchReceiver,
     },
 };
 
@@ -26,6 +26,8 @@ type Shared<T> = Arc<RwLock<T>>;
 /// P2p service connection handle
 #[derive(Clone)]
 pub struct PeerConnection {
+    /// Own service name
+    service_name: Shared<String>,
     /// Peer service name
     peer_service_name: Shared<String>,
     /// Sender to forward calls to the service
@@ -41,11 +43,17 @@ pub struct PeerConnection {
 
 impl PeerConnection {
     /// Create new service handle and start tokio task to handle incoming messages from the peer
-    pub fn new(peer_service_name: String, mut socket: UnixStream, service_tx: TaskChannel) -> Self {
+    pub fn new(
+        service_name: String,
+        peer_service_name: String,
+        mut socket: UnixStream,
+        service_tx: TaskChannel,
+    ) -> Self {
         let (task_tx, mut task_rx) = mpsc::channel(32);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
         let mut this = Self {
+            service_name: Arc::new(RwLock::new(service_name)),
             peer_service_name: Arc::new(RwLock::new(peer_service_name)),
             service_tx,
             task_tx,
@@ -109,10 +117,12 @@ impl PeerConnection {
                                 if let Err(_) = socket.write_all(request.bytes().as_slice()).await {
                                     warn!("Failed to write peer `{}` signal. Shutting him down", this.peer_service_name.read());
 
+                                    drop(callback_tx);
                                     this.close_with_socket(&mut socket).await;
                                     return
                                 }
 
+                                let _ = callback_tx.send(Response::Ok.into_message(0)).await;
                             }
                             m => { error!("Invalid incoming message for a service: {:?}", m) }
                         };
@@ -186,7 +196,7 @@ impl PeerConnection {
         callback: impl Fn(&T) + Send + 'static,
     ) -> Result<(), Box<dyn Error + Sync + Send>> {
         let message =
-            Message::new_subscription(self.peer_service_name.read().clone(), signal_name.clone());
+            Message::new_subscription(self.service_name.read().clone(), signal_name.clone());
 
         // This is a tricky one. First we use channel to read subscription status, and after that
         // for incomin signal emission
@@ -200,7 +210,7 @@ impl PeerConnection {
         match response.body() {
             // Succesfully performed remote method call
             MessageBody::Response(Response::Ok) => {
-                debug!("Succesfully subscribed to the signal {}", signal_name);
+                debug!("Succesfully subscribed to the signal `{}`", signal_name);
 
                 PeerConnection::start_subscription_receiving_task(signal_name, rx, callback);
 
@@ -218,7 +228,7 @@ impl PeerConnection {
             }
             // Invalid protocol
             r => {
-                error!("Invalid Ok response for a method call: {:?}", r);
+                error!("Invalid Ok response for a subscription: {:?}", r);
                 Err(Box::new(BusError::InvalidProtocol))
             }
         }
@@ -259,7 +269,7 @@ impl PeerConnection {
                     }
                     None => {
                         error!(
-                            "Failed to listen to signal {} subscription. Cancelling",
+                            "Failed to listen to signal `{}` subscription. Cancelling",
                             signal_name
                         );
                         return;
@@ -271,17 +281,26 @@ impl PeerConnection {
 
     /// Start subscription task, which polls signal Receiver and sends peer message
     /// if emited
-    pub(crate) fn start_signal_sending_task(&self, mut signal_receiver: WatchReceiver<Message>) {
+    pub(crate) fn start_signal_sending_task(
+        &self,
+        mut signal_receiver: BroadcastReceiver<Message>,
+        seq: u64,
+    ) {
         let self_tx = self.task_tx.clone();
 
         tokio::spawn(async move {
             loop {
                 // Wait for signal emission
-                match signal_receiver.changed().await {
-                    Ok(_) => {
-                        let message = (*signal_receiver.borrow()).clone();
+                match signal_receiver.recv().await {
+                    Ok(mut message) => {
+                        // Replace seq with subscription seq
+                        message.update_seq(seq);
+
                         // Call self task to send signal message
-                        let _ = utils::call_task(&self_tx, message).await;
+                        if let Err(_) = utils::call_task(&self_tx, message).await {
+                            error!("Failed to send signal to a subscriber. Removing subscriber");
+                            return;
+                        }
                     }
                     Err(err) => {
                         error!("Signal receiver error: {:?}", err);

@@ -48,6 +48,10 @@ impl Message {
         self.seq
     }
 
+    pub fn update_seq(&mut self, seq: u64) {
+        self.seq = seq;
+    }
+
     pub fn bytes(self) -> Vec<u8> {
         bson::to_raw_document_buf(&self).unwrap().into_bytes()
     }

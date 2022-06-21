@@ -6,7 +6,7 @@ use caro_bus_lib::BusConnection;
 #[tokio::main]
 async fn main() {
     pretty_env_logger::formatted_builder()
-        .filter_level(LevelFilter::Debug)
+        .filter_level(LevelFilter::Trace)
         .init();
 
     let mut bus = BusConnection::register("com.examples.call_method".into())
@@ -26,6 +26,4 @@ async fn main() {
 
     let call_result: String = peer_connection.call(&"method".into(), &69).await.unwrap();
     debug!("Method call result: {}", call_result);
-
-    bus.close().await
 }

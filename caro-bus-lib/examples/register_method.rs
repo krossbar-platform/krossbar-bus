@@ -3,7 +3,7 @@ use tokio;
 
 use caro_bus_lib::BusConnection;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     pretty_env_logger::formatted_builder()
         .filter_level(LevelFilter::Trace)
@@ -19,5 +19,4 @@ async fn main() {
     .unwrap();
 
     let _ = tokio::signal::ctrl_c().await;
-    bus.close().await;
 }
