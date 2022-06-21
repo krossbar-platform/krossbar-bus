@@ -73,7 +73,8 @@ impl PeerConnection {
                                         if let Err(_) = socket.write_all(response.bytes().as_slice()).await {
                                             warn!("Failed to write peer `{}` response. Shutting him down", this.peer_service_name.read());
 
-                                            this.close().await;
+                                            this.close_with_socket(&mut socket).await;
+                                            return
                                         }
                                     }
                                 }
@@ -82,7 +83,8 @@ impl PeerConnection {
                                 let peer_name = this.peer_service_name.read().clone();
                                 warn!("Failed to read peer `{}` message. Shutting him down", peer_name);
 
-                                this.close().await;
+                                this.close_with_socket(&mut socket).await;
+                                return
                             }
                         }
                     },
@@ -93,19 +95,22 @@ impl PeerConnection {
                         match request.body() {
                             MessageBody::MethodCall{ .. } => {
                                 if let Err(_)  = this.call_registry.call(&mut socket, request, callback_tx).await {
-                                    this.close().await;
+                                    this.close_with_socket(&mut socket).await;
+                                    return
                                 }
                             },
                             MessageBody::SignalSubscription{ .. } => {
                                 if let Err(_) = this.call_registry.call(&mut socket, request, callback_tx).await {
-                                    this.close().await;
+                                    this.close_with_socket(&mut socket).await;
+                                    return
                                 }
                             },
                             MessageBody::Response(Response::Signal(_)) => {
                                 if let Err(_) = socket.write_all(request.bytes().as_slice()).await {
                                     warn!("Failed to write peer `{}` signal. Shutting him down", this.peer_service_name.read());
 
-                                    this.close().await;
+                                    this.close_with_socket(&mut socket).await;
+                                    return
                                 }
 
                             }
@@ -318,13 +323,21 @@ impl PeerConnection {
             Response::Shutdown(self_name.clone()).into_message(0),
         );
     }
+
+    /// Closes socket end shuts service down. We need this in case of socket IO errors.
+    /// In this case socket will be always readable with zero bytes received
+    async fn close_with_socket(&mut self, socket: &mut UnixStream) {
+        drop(socket);
+        self.close().await;
+    }
 }
 
 impl Drop for PeerConnection {
     fn drop(&mut self) {
-        let this = self.clone();
+        let shutdown_tx = self.shutdown_tx.clone();
+
         tokio::spawn(async move {
-            this.shutdown_tx.send(()).await.unwrap();
+            let _ = shutdown_tx.send(()).await;
         });
     }
 }

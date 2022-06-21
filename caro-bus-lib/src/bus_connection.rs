@@ -558,9 +558,10 @@ impl BusConnection {
 
 impl Drop for BusConnection {
     fn drop(&mut self) {
-        let this = self.clone();
+        let shutdown_tx = self.shutdown_tx.clone();
+
         tokio::spawn(async move {
-            this.shutdown_tx.send(()).await.unwrap();
+            let _ = shutdown_tx.send(()).await;
         });
     }
 }
