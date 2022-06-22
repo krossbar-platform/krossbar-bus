@@ -13,7 +13,7 @@ use tokio::{
     },
 };
 
-use super::utils::{self, TaskChannel};
+use crate::utils::{self, TaskChannel};
 use caro_bus_common::{
     call_registry::CallRegistry,
     errors::Error as BusError,
@@ -113,9 +113,26 @@ impl PeerConnection {
                                     return
                                 }
                             },
+                            MessageBody::StateSubscription{ .. } => {
+                                if let Err(_) = this.call_registry.call(&mut socket, request, callback_tx).await {
+                                    this.close_with_socket(&mut socket).await;
+                                    return
+                                }
+                            },
                             MessageBody::Response(Response::Signal(_)) => {
                                 if let Err(_) = socket.write_all(request.bytes().as_slice()).await {
-                                    warn!("Failed to write peer `{}` signal. Shutting him down", this.peer_service_name.read());
+                                    warn!("Failed to send signal to a peer `{}`. Shutting him down", this.peer_service_name.read());
+
+                                    drop(callback_tx);
+                                    this.close_with_socket(&mut socket).await;
+                                    return
+                                }
+
+                                let _ = callback_tx.send(Response::Ok.into_message(0)).await;
+                            },
+                            MessageBody::Response(Response::StateChanged(_)) => {
+                                if let Err(_) = socket.write_all(request.bytes().as_slice()).await {
+                                    warn!("Failed to send state change to a peer `{}`. Shutting him down", this.peer_service_name.read());
 
                                     drop(callback_tx);
                                     this.close_with_socket(&mut socket).await;
@@ -198,14 +215,7 @@ impl PeerConnection {
         let message =
             Message::new_subscription(self.service_name.read().clone(), signal_name.clone());
 
-        // This is a tricky one. First we use channel to read subscription status, and after that
-        // for incomin signal emission
-        let (tx, mut rx) = mpsc::channel(10);
-
-        // Send subscription request
-        self.task_tx.send((message, tx)).await?;
-
-        let response = rx.recv().await.unwrap();
+        let (response, rx) = self.make_subscription_call(message, signal_name).await?;
 
         match response.body() {
             // Succesfully performed remote method call
@@ -216,6 +226,67 @@ impl PeerConnection {
 
                 Ok(())
             }
+            // Invalid protocol
+            r => {
+                error!("Invalid Ok response for a signal subscription: {:?}", r);
+                Err(Box::new(BusError::InvalidProtocol))
+            }
+        }
+    }
+
+    /// Start watching remote state changes
+    /// "Returns" current state value
+    pub async fn watch<T: DeserializeOwned>(
+        &mut self,
+        state_name: &String,
+        callback: impl Fn(&T) + Send + 'static,
+    ) -> Result<T, Box<dyn Error + Sync + Send>> {
+        let message = Message::new_watch(self.service_name.read().clone(), state_name.clone());
+
+        let (response, rx) = self.make_subscription_call(message, state_name).await?;
+
+        match response.body() {
+            // Succesfully performed remote method call
+            MessageBody::Response(Response::StateChanged(data)) => {
+                let state = match bson::from_bson::<T>(data.clone()) {
+                    Ok(data) => Ok(data),
+                    Err(err) => {
+                        error!("Can't deserialize state response: {}", err.to_string());
+                        Err(Box::new(BusError::InvalidResponse))
+                    }
+                }?;
+
+                debug!("Succesfully started watching state `{}`", state_name);
+
+                PeerConnection::start_subscription_receiving_task(state_name, rx, callback);
+
+                Ok(state)
+            }
+            // Invalid protocol
+            r => {
+                error!("Invalid Ok response for a signal subscription: {:?}", r);
+                Err(Box::new(BusError::InvalidProtocol))
+            }
+        }
+    }
+
+    /// Make subscription call and get result
+    /// Used for both: signals and states
+    pub async fn make_subscription_call(
+        &mut self,
+        message: Message,
+        signal_name: &String,
+    ) -> Result<(Message, Receiver<Message>), Box<dyn Error + Sync + Send>> {
+        // This is a tricky one. First we use channel to read subscription status, and after that
+        // for incomin signal emission
+        let (tx, mut rx) = mpsc::channel(10);
+
+        // Send subscription request
+        self.task_tx.send((message, tx)).await?;
+
+        let response = rx.recv().await.unwrap();
+
+        match response.body() {
             // Got an error from the peer
             MessageBody::Response(Response::Error(err)) => {
                 warn!(
@@ -227,14 +298,11 @@ impl PeerConnection {
                 Err(Box::new(err.clone()))
             }
             // Invalid protocol
-            r => {
-                error!("Invalid Ok response for a subscription: {:?}", r);
-                Err(Box::new(BusError::InvalidProtocol))
-            }
+            _ => Ok((response, rx)),
         }
     }
 
-    /// Start task to receive signals emission and calling user callback
+    /// Start task to receive signals emission, state changes and calling user callback
     fn start_subscription_receiving_task<T: DeserializeOwned>(
         signal_name: &String,
         mut receiver: Receiver<Message>,
@@ -248,15 +316,30 @@ impl PeerConnection {
                 match receiver.recv().await {
                     Some(message) => {
                         match message.body() {
+                            // Signal
                             MessageBody::Response(Response::Signal(value)) => {
                                 match bson::from_bson::<T>(value.clone()) {
                                     Ok(value) => {
-                                        // Call callback
+                                        // Call back
                                         callback(&value);
                                     }
                                     Err(err) => {
                                         error!(
                                             "Failed to deserialize signal value: {}",
+                                            err.to_string()
+                                        );
+                                    }
+                                }
+                            }
+                            MessageBody::Response(Response::StateChanged(value)) => {
+                                match bson::from_bson::<T>(value.clone()) {
+                                    Ok(value) => {
+                                        // Call back
+                                        callback(&value);
+                                    }
+                                    Err(err) => {
+                                        error!(
+                                            "Failed to deserialize state value: {}",
                                             err.to_string()
                                         );
                                     }

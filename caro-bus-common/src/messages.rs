@@ -31,6 +31,10 @@ pub enum MessageBody {
         subscriber_name: String,
         signal_name: String,
     },
+    StateSubscription {
+        subscriber_name: String,
+        state_name: String,
+    },
 }
 
 impl IntoMessage for MessageBody {
@@ -93,6 +97,16 @@ impl Message {
             },
         }
     }
+
+    pub fn new_watch(subscriber_name: String, state_name: String) -> Self {
+        Self {
+            seq: INVALID_SEQ,
+            body: MessageBody::StateSubscription {
+                subscriber_name,
+                state_name,
+            },
+        }
+    }
 }
 
 pub enum EitherMessage {
@@ -129,6 +143,7 @@ pub enum Response {
     Shutdown(String),
     Return(Bson),
     Signal(Bson),
+    StateChanged(Bson),
     Error(errors::Error),
 }
 

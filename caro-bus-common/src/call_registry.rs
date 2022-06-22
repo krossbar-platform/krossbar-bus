@@ -108,5 +108,6 @@ impl CallRegistry {
     /// If we should keep sender after resolving. Used for subscriptions
     fn is_persistent_call(message: &Message) -> bool {
         matches!(message.body(), MessageBody::SignalSubscription { .. })
+            || matches!(message.body(), MessageBody::StateSubscription { .. })
     }
 }

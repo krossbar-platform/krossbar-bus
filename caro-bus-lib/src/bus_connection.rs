@@ -19,17 +19,18 @@ use tokio::{
         broadcast::{self, Sender as BroadcastSender},
         mpsc::{self, Receiver, Sender},
         oneshot::{self, Sender as OneSender},
+        watch::{self, Receiver as WatchReceiver},
     },
     time,
 };
 
-use crate::{signal::Signal, utils::TaskChannel};
-
-use super::{
-    //method::{Method, MethodCall, MethodTrait},
+use crate::{
     peer_connection::PeerConnection,
-    utils,
+    signal::Signal,
+    state::State,
+    utils::{self, TaskChannel},
 };
+
 use caro_bus_common::{
     call_registry::CallRegistry,
     errors::Error as BusError,
@@ -54,9 +55,12 @@ pub struct BusConnection {
     /// Registered methods. Sender is used to send parameters and
     /// receive a result from a callback
     methods: Shared<HashMap<String, Sender<MethodCall>>>,
-    /// Registered methods. Sender is used to notify users
-    /// about signals
+    /// Registered signals. Sender is used to emit signals to subscribers
     signals: Shared<HashMap<String, BroadcastSender<Message>>>,
+    /// Registered states.
+    /// Sender is used to nofity state change to subscribers
+    /// Receiver used to get current walue when user makes watch request
+    states: Shared<HashMap<String, (BroadcastSender<Message>, WatchReceiver<Bson>)>>,
     /// Sender to make calls into the task
     task_tx: TaskChannel,
     /// Sender to shutdown bus connection
@@ -80,6 +84,7 @@ impl BusConnection {
             peers: Arc::new(RwLock::new(HashMap::new())),
             methods: Arc::new(RwLock::new(HashMap::new())),
             signals: Arc::new(RwLock::new(HashMap::new())),
+            states: Arc::new(RwLock::new(HashMap::new())),
             task_tx,
             shutdown_tx,
             call_registry: CallRegistry::new(),
@@ -371,6 +376,38 @@ impl BusConnection {
         Ok(Signal::new(signal_name.clone(), tx))
     }
 
+    pub fn register_state<T>(
+        &mut self,
+        state_name: &String,
+        initial_value: T,
+    ) -> Result<State<T>, Box<dyn Error>>
+    where
+        T: Serialize + 'static,
+    {
+        let mut states = self.states.write();
+
+        if states.contains_key(state_name) {
+            error!(
+                "Failed to register state `{}`. Already registered",
+                state_name
+            );
+
+            return Err(Box::new(BusError::AlreadyRegistered));
+        }
+
+        // Channel to send state update to subscribers
+        let (tx, _rx) = broadcast::channel(5);
+
+        // Channel to get current value when someone is subscribing
+        let bson = bson::to_bson(&initial_value).unwrap();
+        let (watch_tx, watch_rx) = watch::channel(bson);
+
+        states.insert(state_name.clone(), (tx.clone(), watch_rx));
+
+        info!("Succesfully registered state: {}", state_name);
+        Ok(State::new(state_name.clone(), initial_value, tx, watch_tx))
+    }
+
     /// Handle messages incoming form an existent peer connection
     async fn handle_task_message(
         &mut self,
@@ -401,7 +438,20 @@ impl BusConnection {
                 signal_name,
             } => {
                 let response = self
-                    .handle_signal_subscription(subscriber_name, signal_name, message.seq())
+                    .handle_incoming_signal_subscription(
+                        subscriber_name,
+                        signal_name,
+                        message.seq(),
+                    )
+                    .await;
+                callback.send(response).await.unwrap();
+            }
+            MessageBody::StateSubscription {
+                subscriber_name,
+                state_name,
+            } => {
+                let response = self
+                    .handle_incoming_state_watch(subscriber_name, state_name, message.seq())
                     .await;
                 callback.send(response).await.unwrap();
             }
@@ -422,11 +472,16 @@ impl BusConnection {
     /// Handle incoming method call
     async fn handle_method_call(
         &self,
-        _subscriber_name: &String,
+        caller_name: &String,
         method_name: &String,
         params: &Bson,
         seq: u64,
     ) -> Message {
+        debug!(
+            "Service `{}` requested method `{}` call",
+            caller_name, method_name
+        );
+
         let method = self.methods.read().get(method_name).cloned();
 
         if let Some(method) = method {
@@ -442,20 +497,54 @@ impl BusConnection {
         }
     }
 
-    async fn handle_signal_subscription(
+    async fn handle_incoming_signal_subscription(
         &self,
-        caller_name: &String,
+        subscriber_name: &String,
         signal_name: &String,
         seq: u64,
     ) -> Message {
+        debug!(
+            "Service `{}` requested signal `{}` subscription",
+            subscriber_name, signal_name
+        );
+
         let signal = self.signals.read().get(signal_name).cloned();
 
         if let Some(signal_sender) = signal {
             // Find subscriber
-            match self.peers.read().get(caller_name) {
+            match self.peers.read().get(subscriber_name) {
                 Some(caller) => {
                     caller.start_signal_sending_task(signal_sender.subscribe(), seq);
                     Response::Ok.into_message(seq)
+                }
+                None => BusError::InvalidProtocol.into_message(seq),
+            }
+        } else {
+            BusError::NotRegistered.into_message(seq)
+        }
+    }
+
+    async fn handle_incoming_state_watch(
+        &self,
+        subscriber_name: &String,
+        state_name: &String,
+        seq: u64,
+    ) -> Message {
+        debug!(
+            "Service `{}` requested state `{}` watch",
+            subscriber_name, state_name
+        );
+
+        let state = self.states.read().get(state_name).cloned();
+
+        if let Some((state_change_sender, value_watch)) = state {
+            // Find subscriber
+            match self.peers.read().get(subscriber_name) {
+                Some(caller) => {
+                    let current_value = value_watch.borrow().clone();
+
+                    caller.start_signal_sending_task(state_change_sender.subscribe(), seq);
+                    Response::StateChanged(current_value).into_message(seq)
                 }
                 None => BusError::InvalidProtocol.into_message(seq),
             }
