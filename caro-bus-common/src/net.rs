@@ -9,7 +9,10 @@ use crate::messages::{self, EitherMessage, Message};
 /// Function to read Message from a socket. This function is intended to read exact amount
 /// of data to parse a message. The lib need this, because we may have a file descriptor right after a
 /// message. And we want to keep those descriptor to read it with passfd::recv_fd
-pub async fn read_message(socket: &mut UnixStream, buffer: &mut BytesMut) -> IoResult<Message> {
+pub async fn read_message_from_socket(
+    socket: &mut UnixStream,
+    buffer: &mut BytesMut,
+) -> IoResult<Message> {
     // First read Bson length
     let mut bytes_to_read = 4;
 

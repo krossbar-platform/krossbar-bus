@@ -10,9 +10,7 @@ pub enum Error {
     NotFound,
     #[error("Service with this name is already registered")]
     NameRegistered,
-    #[error("Method call error")]
-    MethodCallError(String),
-    #[error("Method or signal with a given name already registered")]
+    #[error("Method, Signal, or State with a given name already registered")]
     AlreadyRegistered,
     #[error("Method, Signal, or State not registered")]
     NotRegistered,
@@ -22,7 +20,9 @@ pub enum Error {
     InvalidParameters,
     #[error("Invalid return type from a function. Can't deserialize response")]
     InvalidResponse,
-    #[error("Internal bus error. See logs for details")]
+    #[error("Invalid message received. Internal error. Please fill bug report")]
+    InvalidMessage,
+    #[error("Internal bus error. See logs for details. Please fill bug report")]
     Internal,
 }
 

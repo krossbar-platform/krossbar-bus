@@ -68,7 +68,7 @@ impl PeerConnection {
             loop {
                 tokio::select! {
                     // Read incoming message from the peer
-                    read_result = net::read_message(&mut socket, &mut bytes) => {
+                    read_result = net::read_message_from_socket(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
                                 match message.body() {
@@ -195,7 +195,7 @@ impl PeerConnection {
                 // Invalid protocol
                 r => {
                     error!("Invalid Ok response for a method call: {:?}", r);
-                    Err(Box::new(BusError::InvalidProtocol))
+                    Err(Box::new(BusError::InvalidMessage))
                 }
             },
             // Network error
@@ -229,7 +229,7 @@ impl PeerConnection {
             // Invalid protocol
             r => {
                 error!("Invalid Ok response for a signal subscription: {:?}", r);
-                Err(Box::new(BusError::InvalidProtocol))
+                Err(Box::new(BusError::InvalidMessage))
             }
         }
     }
@@ -265,7 +265,7 @@ impl PeerConnection {
             // Invalid protocol
             r => {
                 error!("Invalid Ok response for a signal subscription: {:?}", r);
-                Err(Box::new(BusError::InvalidProtocol))
+                Err(Box::new(BusError::InvalidMessage))
             }
         }
     }
@@ -408,7 +408,7 @@ impl PeerConnection {
                     err.to_string()
                 );
 
-                BusError::InvalidProtocol.into_message(response_seq)
+                BusError::Internal.into_message(response_seq)
             }
         }
     }

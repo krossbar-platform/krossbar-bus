@@ -117,7 +117,10 @@ impl BusConnection {
 
         let mut bytes = BytesMut::with_capacity(64);
         // Wait for hub response
-        match net::read_message(socket, &mut bytes).await?.body() {
+        match net::read_message_from_socket(socket, &mut bytes)
+            .await?
+            .body()
+        {
             MessageBody::Response(Response::Ok) => {
                 info!("Succesfully registered service as `{}`", self_name);
 
@@ -129,7 +132,7 @@ impl BusConnection {
             }
             m => {
                 error!("Invalid response from the hub: {:?}", m);
-                return Err(Box::new(BusError::InvalidProtocol));
+                return Err(Box::new(BusError::InvalidMessage));
             }
         }
     }
@@ -157,7 +160,7 @@ impl BusConnection {
             loop {
                 tokio::select! {
                     // Read incoming message from the hub
-                    read_result = net::read_message(&mut socket, &mut bytes) => {
+                    read_result = net::read_message_from_socket(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
                                 trace!("Got a message from the hub: {:?}", message);
@@ -247,7 +250,7 @@ impl BusConnection {
                 // Invalid protocol here
                 m => {
                     error!("Invalid response from the hub: {:?}", m);
-                    return Err(Box::new(BusError::InvalidProtocol));
+                    return Err(Box::new(BusError::InvalidMessage));
                 }
             }
         }
@@ -517,7 +520,7 @@ impl BusConnection {
                     caller.start_signal_sending_task(signal_sender.subscribe(), seq);
                     Response::Ok.into_message(seq)
                 }
-                None => BusError::InvalidProtocol.into_message(seq),
+                None => BusError::Internal.into_message(seq),
             }
         } else {
             BusError::NotRegistered.into_message(seq)
@@ -546,7 +549,7 @@ impl BusConnection {
                     caller.start_signal_sending_task(state_change_sender.subscribe(), seq);
                     Response::StateChanged(current_value).into_message(seq)
                 }
-                None => BusError::InvalidProtocol.into_message(seq),
+                None => BusError::Internal.into_message(seq),
             }
         } else {
             BusError::NotRegistered.into_message(seq)

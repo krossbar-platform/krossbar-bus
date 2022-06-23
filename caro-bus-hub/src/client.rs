@@ -64,7 +64,7 @@ impl Client {
 
             loop {
                 tokio::select! {
-                    read_result = net::read_message(&mut socket, &mut bytes) => {
+                    read_result = net::read_message_from_socket(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
                                 if let Some(response) = this.handle_client_request(message).await {
@@ -241,7 +241,7 @@ impl Client {
             }
         } else {
             error!("Unexpected data message send to the hub: {:?}", message);
-            Some(BusError::InvalidProtocol.into_message(message.seq()))
+            Some(BusError::InvalidMessage.into_message(message.seq()))
         }
     }
 
@@ -262,7 +262,7 @@ impl Client {
                 "Client is not allowed to register with name `{:?}`",
                 service_name
             );
-            return Some(BusError::InvalidProtocol.into_message(seq));
+            return Some(BusError::NotAllowed.into_message(seq));
         }
 
         // Service requested new service_name. We update our service name here.
