@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, os::unix::net::UnixStream as OsUnixStream};
+use std::{collections::HashMap, fs, os::unix::net::UnixStream as OsUnixStream, sync::Arc};
 
 use caro_bus_common::{
     errors::Error as BusError,
@@ -12,7 +12,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use super::client::Client;
+use crate::{client::Client, permissions::Permissions, Args};
 
 #[derive(Debug)]
 pub struct ClientRequest {
@@ -27,10 +27,11 @@ pub struct Hub {
     shutdown_rx: Receiver<()>,
     anonymous_clients: HashMap<Uuid, Client>,
     clients: HashMap<String, Client>,
+    permissions: Arc<Permissions>,
 }
 
 impl Hub {
-    pub fn new(shutdown_rx: Receiver<()>) -> Self {
+    pub fn new(args: Args, shutdown_rx: Receiver<()>) -> Self {
         let (client_tx, hub_rx) = mpsc::channel::<ClientRequest>(32);
 
         Self {
@@ -39,6 +40,7 @@ impl Hub {
             shutdown_rx,
             anonymous_clients: HashMap::new(),
             clients: HashMap::new(),
+            permissions: Arc::new(Permissions::new(&args.service_files_dir)),
         }
     }
 
@@ -87,7 +89,12 @@ impl Hub {
         // Temporal name until client sends registration message
         let uuid = Uuid::new_v4();
 
-        let client = Client::run(uuid.clone(), self.client_tx.clone(), socket);
+        let client = Client::run(
+            uuid.clone(),
+            self.client_tx.clone(),
+            socket,
+            self.permissions.clone(),
+        );
 
         self.anonymous_clients.insert(uuid.clone(), client);
     }
@@ -200,7 +207,10 @@ impl Hub {
                 );
 
                 self.client(&requester_service_name)
-                    .send_message(&target_service_name, BusError::NotAllowed.into_message(seq))
+                    .send_message(
+                        &target_service_name,
+                        BusError::NotAllowed("Can't connect itself".into()).into_message(seq),
+                    )
                     .await;
                 return;
             }

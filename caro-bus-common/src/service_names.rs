@@ -12,6 +12,7 @@ pub enum NameError {
     EmptySection,
 }
 
+#[derive(Debug)]
 enum NameSectionPattern {
     /// `*`
     AnyName,
@@ -41,6 +42,7 @@ impl NameSectionPattern {
     }
 }
 
+#[derive(Debug)]
 pub struct NamePattern {
     section_patterns: Vec<NameSectionPattern>,
 }

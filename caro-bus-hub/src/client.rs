@@ -10,13 +10,14 @@ use parking_lot::RwLock;
 use passfd::tokio::FdPassingExt;
 use tokio::{
     io::AsyncWriteExt,
-    net::UnixStream,
+    net::{unix::UCred, UnixStream},
     sync::mpsc::{self, Receiver, Sender},
 };
 use uuid::Uuid;
 
+use crate::permissions::Permissions;
+
 use super::hub::ClientRequest;
-use super::permissions;
 use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, IntoMessage, Message, MessageBody, Response, ServiceMessage},
@@ -38,6 +39,7 @@ pub struct Client {
     service_name: Shared<String>,
     task_tx: Sender<HubReponse>,
     hub_tx: Sender<ClientRequest>,
+    permissions: Arc<Permissions>,
 }
 
 impl Client {
@@ -46,7 +48,12 @@ impl Client {
         self.service_name.read().clone()
     }
 
-    pub fn run(uuid: Uuid, hub_tx: Sender<ClientRequest>, mut socket: UnixStream) -> Self {
+    pub fn run(
+        uuid: Uuid,
+        hub_tx: Sender<ClientRequest>,
+        mut socket: UnixStream,
+        permissions: Arc<Permissions>,
+    ) -> Self {
         trace!("Starting new client with UUID {:?}", uuid);
 
         let (client_tx, mut client_rx) = mpsc::channel::<HubReponse>(32);
@@ -56,6 +63,7 @@ impl Client {
             service_name: Arc::new(RwLock::new(String::from(""))),
             task_tx: client_tx,
             hub_tx,
+            permissions,
         };
         let mut this = client_handle.clone();
 
@@ -67,7 +75,7 @@ impl Client {
                     read_result = net::read_message_from_socket(&mut socket, &mut bytes) => {
                         match read_result {
                             Ok(message) => {
-                                if let Some(response) = this.handle_client_request(message).await {
+                                if let Some(response) = this.handle_client_request(socket.peer_cred().unwrap(), message).await {
                                     // Failed to write into socket. Client shutwodn
                                     if let Err(err) = socket.write_all(response.bytes().as_slice()).await {
                                         error!("Failed to write into a client socket: {}. Shutting him down", err.to_string());
@@ -210,7 +218,11 @@ impl Client {
     }
 
     // Handle incoming client message
-    async fn handle_client_request(&mut self, message: messages::Message) -> Option<Message> {
+    async fn handle_client_request(
+        &mut self,
+        user_credentials: UCred,
+        message: messages::Message,
+    ) -> Option<Message> {
         trace!(
             "Incoming service `{}` message: {:?}",
             self.service_name.read(),
@@ -224,6 +236,7 @@ impl Client {
                     service_name,
                 } => {
                     self.handle_registration_message(
+                        user_credentials,
                         *protocol_version,
                         service_name.clone(),
                         message.seq(),
@@ -248,6 +261,7 @@ impl Client {
     // Handle incoming client registration request
     async fn handle_registration_message(
         &mut self,
+        user_credentials: UCred,
         protocol_version: i64,
         service_name: String,
         seq: u64,
@@ -257,12 +271,15 @@ impl Client {
             return Some(BusError::InvalidProtocol.into_message(seq));
         }
 
-        if !permissions::service_name_allowed(&"socket_addr".into(), &service_name) {
+        if let Err(err) = self
+            .permissions
+            .check_service_name_allowed(user_credentials, &service_name)
+        {
             warn!(
-                "Client is not allowed to register with name `{:?}`",
-                service_name
+                "Client is not allowed to register with name `{:?}`: {}",
+                service_name, err
             );
-            return Some(BusError::NotAllowed.into_message(seq));
+            return Some(err.into_message(seq));
         }
 
         // Service requested new service_name. We update our service name here.
@@ -294,12 +311,15 @@ impl Client {
     ) -> Option<Message> {
         let self_service_name = self.service_name.read().clone();
 
-        if !permissions::connection_allowed(&self_service_name, &peer_service_name) {
+        if let Err(err) = self
+            .permissions
+            .check_connection_allowed(&self_service_name, &peer_service_name)
+        {
             warn!(
-                "Client `{:?}` is not allowed to connect with `{:?}`",
-                self_service_name, peer_service_name
+                "Client `{:?}` is not allowed to connect with `{:?}`: {}",
+                self_service_name, peer_service_name, err
             );
-            return Some(BusError::NotAllowed.into_message(seq));
+            return Some(err.into_message(seq));
         }
 
         // Notify hub about connection request

@@ -4,8 +4,8 @@ use thiserror::Error;
 
 #[derive(Serialize, Deserialize, Debug, Error, Clone)]
 pub enum Error {
-    #[error("Connection with service now allowed")]
-    NotAllowed,
+    #[error("Not allowed. {0}")]
+    NotAllowed(String),
     #[error("Service not found")]
     NotFound,
     #[error("Service with this name is already registered")]

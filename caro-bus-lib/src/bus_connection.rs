@@ -128,7 +128,7 @@ impl BusConnection {
             }
             MessageBody::Response(Response::Error(err)) => {
                 warn!("Failed to register service as `{}`: {}", self_name, err);
-                return Err(Box::new(BusError::NotAllowed));
+                return Err(Box::new(err.clone()));
             }
             m => {
                 error!("Invalid response from the hub: {:?}", m);
@@ -245,7 +245,7 @@ impl BusConnection {
                         self.service_name.read(),
                         err
                     );
-                    return Err(Box::new(BusError::NotAllowed));
+                    return Err(Box::new(err.clone()));
                 }
                 // Invalid protocol here
                 m => {
