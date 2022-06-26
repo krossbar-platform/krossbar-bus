@@ -49,7 +49,10 @@ impl Permissions {
 
         let pid = match user_credentials.pid() {
             Some(pid) => pid,
-            _ => return Err(BusError::NotAllowed("Failed to get service pid".into())),
+            _ => {
+                warn!("Failed to get peer `{}` pid", service_name);
+                return Err(BusError::NotAllowed);
+            }
         };
         trace!("Peer pid: {}", pid);
 
@@ -57,7 +60,10 @@ impl Permissions {
 
         let service_exec = match read_link(&process_exe_path) {
             Ok(buf) => buf.to_str().unwrap().to_string(),
-            _ => return Err(BusError::NotAllowed("Failed to get peer exec path".into())),
+            _ => {
+                warn!("Failed to get exec path for PID {}", pid);
+                return Err(BusError::NotAllowed);
+            }
         };
         trace!("Peer binary: {}", service_exec);
 
@@ -78,10 +84,7 @@ impl Permissions {
                 service_exec, service_name
             );
 
-            Err(BusError::NotAllowed(format!(
-                "Binary `{}` is not allowed to register `{}` service",
-                service_exec, service_name
-            )))
+            Err(BusError::NotAllowed)
         }
     }
 
@@ -89,28 +92,31 @@ impl Permissions {
         let json = self.parse_service_file_json(service_name)?;
 
         if !json.has_key(ALLOWED_EXECS_KEY) {
-            return Err(BusError::NotAllowed(format!(
+            warn!(
                 "Failed to find `{}` entry in a service file",
                 ALLOWED_EXECS_KEY
-            )));
+            );
+            return Err(BusError::NotAllowed);
         }
 
         let allowed_execs = match json[ALLOWED_EXECS_KEY].as_str() {
             Some(str) => str,
             _ => {
-                return Err(BusError::NotAllowed(format!(
+                warn!(
                     "Invalid `{}` entry in a service file. Expected string, got `{}`",
                     ALLOWED_EXECS_KEY, json[ALLOWED_EXECS_KEY]
-                )))
+                );
+                return Err(BusError::NotAllowed);
             }
         };
 
         match Pattern::new(allowed_execs) {
             Ok(glob) => Ok(glob),
-            Err(glob_err) => return Err(BusError::NotAllowed(format!(
-                "Invalid `{}` entry in a service file. Failed to parse the entry as a GLOB patter: {}",
-                ALLOWED_EXECS_KEY, glob_err.to_string()
-            )))
+            Err(glob_err) => {
+                warn!( "Invalid `{}` entry in a service file. Failed to parse the entry as a GLOB patter: {}",
+                ALLOWED_EXECS_KEY, glob_err.to_string());
+                return Err(BusError::NotAllowed);
+            }
         }
     }
 
@@ -133,11 +139,12 @@ impl Permissions {
                     return Ok(());
                 }
                 Err(err) => {
-                    return Err(BusError::NotAllowed(format!(
+                    warn!(
                         "Failed to match `{}` service name against name pattern: {}",
                         client_service,
                         err.to_string()
-                    )));
+                    );
+                    return Err(BusError::NotAllowed);
                 }
                 Ok(_) => {}
             };
@@ -148,7 +155,7 @@ impl Permissions {
             client_service, target_service
         );
 
-        Err(BusError::NotAllowed("Connection not allowed".into()))
+        Err(BusError::NotAllowed)
     }
 
     fn read_allowed_connections(
@@ -160,38 +167,42 @@ impl Permissions {
         let json = self.parse_service_file_json(service_name)?;
 
         if !json.has_key(INCOMING_CONNS_KEY) {
-            return Err(BusError::NotAllowed(format!(
+            warn!(
                 "Failed to find `{}` entry in a service file",
                 INCOMING_CONNS_KEY
-            )));
+            );
+            return Err(BusError::NotAllowed);
         }
 
         if !json[INCOMING_CONNS_KEY].is_array() {
-            return Err(BusError::NotAllowed(format!(
+            warn!(
                 "Invalid `{}` entry in a service file. Expected array, got `{}`",
                 INCOMING_CONNS_KEY, json[INCOMING_CONNS_KEY]
-            )));
+            );
+            return Err(BusError::NotAllowed);
         }
 
         for connection_entry in json[INCOMING_CONNS_KEY].members() {
             let connection_string = match connection_entry.as_str() {
                 Some(str) => str,
                 _ => {
-                    return Err(BusError::NotAllowed(format!(
+                    warn!(
                         "Invalid connection entry in a service file. Expected string, got `{}`",
                         connection_entry
-                    )))
+                    );
+                    return Err(BusError::NotAllowed);
                 }
             };
 
             match NamePattern::from_string(connection_string) {
                 Ok(pattern) => result.push(pattern),
                 Err(err) => {
-                    return Err(BusError::NotAllowed(format!(
+                    warn!(
                         "Failed to parse allowed connection entry `{}`: {}",
                         connection_string,
                         err.to_string()
-                    )))
+                    );
+                    return Err(BusError::NotAllowed);
                 }
             }
         }
@@ -207,29 +218,32 @@ impl Permissions {
         let mut service_file = match File::open(service_file_name.as_path()) {
             Ok(file) => file,
             _ => {
-                return Err(BusError::NotAllowed(format!(
+                warn!(
                     "Failed to open service file at: {}",
                     service_file_name.as_os_str().to_str().unwrap()
-                )))
+                );
+                return Err(BusError::NotAllowed);
             }
         };
 
         let mut service_file_string = String::new();
         if let Err(err) = service_file.read_to_string(&mut service_file_string) {
-            return Err(BusError::NotAllowed(format!(
+            warn!(
                 "Failed to read service file at `{}`: {}",
                 service_file_name.as_os_str().to_str().unwrap(),
                 err.to_string()
-            )));
+            );
+            return Err(BusError::NotAllowed);
         }
 
         match json::parse(&service_file_string) {
             Err(parse_error) => {
-                return Err(BusError::NotAllowed(format!(
+                warn!(
                     "Failed to parse service file at `{}`: {}",
                     service_file_name.as_os_str().to_str().unwrap(),
                     parse_error.to_string()
-                )))
+                );
+                return Err(BusError::NotAllowed);
             }
             Ok(value) => Ok(value),
         }

@@ -207,10 +207,7 @@ impl Hub {
                 );
 
                 self.client(&requester_service_name)
-                    .send_message(
-                        &target_service_name,
-                        BusError::NotAllowed("Can't connect itself".into()).into_message(seq),
-                    )
+                    .send_message(&target_service_name, BusError::NotAllowed.into_message(seq))
                     .await;
                 return;
             }
