@@ -10,12 +10,10 @@ glob = "0.3.0"
 json = "0.12.4"
 log = "0.4"
 parking_lot = "0.12"
-passfd = { git = "https://github.com/alexander-smoktal/passfd", version = "0.1.5", features = [
-  "tokio",
-] }
 pretty_env_logger = "0.4"
 # TODO: Limit fetures
 tokio = { version = "1.19", features = ["full"] }
+tokio-send-fd = "0.9"
 uuid = { version = "1.1", features = ["v4", "fast-rng"] }
 
 caro-bus-common = { path = "../caro-bus-common" }

@@ -1,16 +1,9 @@
-use std::{
-    collections::HashMap,
-    error::Error,
-    os::unix::{net::UnixStream as OsStream, prelude::FromRawFd},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
 
 use bson::Bson;
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
-use passfd::tokio::FdPassingExt;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     io::AsyncWriteExt,
@@ -23,6 +16,7 @@ use tokio::{
     },
     time,
 };
+use tokio_send_fd::SendFd;
 
 use crate::{
     peer_connection::PeerConnection,
@@ -605,17 +599,8 @@ impl BusConnection {
         peer_service_name: String,
         socket: &mut UnixStream,
     ) -> Result<Message, Box<dyn Error + Sync + Send>> {
-        match socket.recv_fd().await {
-            Ok(peer_fd) => {
-                trace!("Succesfully received peer socket from the hub");
-
-                let os_stream = unsafe { OsStream::from_raw_fd(peer_fd) };
-                // Should not forget about making non-blocking.
-                // This costed me two days of life
-                os_stream.set_nonblocking(true)?;
-
-                let incoming_socket = UnixStream::from_std(os_stream).unwrap();
-
+        match socket.recv_stream().await {
+            Ok(incoming_socket) => {
                 // Create new service connection handle. Can be used to handle own
                 // connection requests by just returning already existing handle
                 let new_service_connection = PeerConnection::new(

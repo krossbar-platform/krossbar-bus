@@ -12,9 +12,7 @@ bytes = "1.1"
 tokio = { version = "1.19", features = ["full"] }
 parking_lot = "0.12"
 log = "0.4"
-passfd = { git = "https://github.com/alexander-smoktal/passfd", version = "0.1.5", features = [
-  "tokio",
-] }
+tokio-send-fd = "0.9"
 serde = "1.0"
 async-trait = "0.1"
 

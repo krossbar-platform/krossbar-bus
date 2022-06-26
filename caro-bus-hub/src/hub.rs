@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, os::unix::net::UnixStream as OsUnixStream, sync::Arc};
+use std::{collections::HashMap, fs, sync::Arc};
 
 use caro_bus_common::{
     errors::Error as BusError,
@@ -184,7 +184,7 @@ impl Hub {
             target_service_name
         );
 
-        let (left, right) = OsUnixStream::pair().unwrap();
+        let (left, right) = UnixStream::pair().unwrap();
 
         {
             // Service to which our client wants to connect is not registered

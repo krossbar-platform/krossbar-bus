@@ -1,18 +1,14 @@
-use std::{
-    io::ErrorKind,
-    os::unix::{io::AsRawFd, net::UnixStream as OsUnixStream},
-    sync::Arc,
-};
+use std::{io::ErrorKind, sync::Arc};
 
 use bytes::BytesMut;
 use log::*;
 use parking_lot::RwLock;
-use passfd::tokio::FdPassingExt;
 use tokio::{
     io::AsyncWriteExt,
     net::{unix::UCred, UnixStream},
     sync::mpsc::{self, Receiver, Sender},
 };
+use tokio_send_fd::SendFd;
 use uuid::Uuid;
 
 use crate::permissions::Permissions;
@@ -28,7 +24,7 @@ type Shared<T> = Arc<RwLock<T>>;
 
 #[derive(Debug)]
 enum HubReponse {
-    Fd(Message, OsUnixStream),
+    Fd(Message, UnixStream),
     Message(Message),
     Shutdown(Message),
 }
@@ -136,7 +132,7 @@ impl Client {
         &mut self,
         message: Message,
         peer_service_name: &String,
-        fd: OsUnixStream,
+        stream: UnixStream,
     ) {
         debug!(
             "Incoming socket descriptor for a service `{}` from `{}`",
@@ -144,7 +140,7 @@ impl Client {
             peer_service_name
         );
 
-        if let Err(err) = self.task_tx.send(HubReponse::Fd(message, fd)).await {
+        if let Err(err) = self.task_tx.send(HubReponse::Fd(message, stream)).await {
             error!(
                 "Failed to send socket descriptor to the client `{}`: {}",
                 peer_service_name,
@@ -176,7 +172,7 @@ impl Client {
                     return Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, ""));
                 }
             }
-            HubReponse::Fd(message, fd) => {
+            HubReponse::Fd(message, stream) => {
                 // With new connections we have two responses:
                 // 1. Response::Error, which we receive as a return value from message handle
                 // 2. Reponse::Ok, and socket fd right after, which is handled here
@@ -192,7 +188,7 @@ impl Client {
                     self.service_name()
                 );
 
-                if let Err(err) = socket.send_fd(fd.as_raw_fd()).await {
+                if let Err(err) = socket.send_stream(stream).await {
                     error!(
                         "Failed to send fd to the service `{:?}`: {}",
                         self.service_name(),
