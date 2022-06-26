@@ -69,30 +69,30 @@ impl PeerConnection {
                 tokio::select! {
                     // Read incoming message from the peer
                     read_result = net::read_message_from_socket(&mut socket, &mut bytes) => {
-                        match read_result {
-                            Ok(message) => {
-                                match message.body() {
-                                    // If got a response to a call, handle it by call_registry. Otherwise it's
-                                    // an incoming call. Use [handle_bus_message]
-                                    MessageBody::Response(_) => this.call_registry.resolve(message).await,
-                                    _ => {
-                                        let response = this.handle_peer_message(message).await;
-
-                                        if let Err(_) = socket.write_all(response.bytes().as_slice()).await {
-                                            warn!("Failed to write peer `{}` response. Shutting him down", this.peer_service_name.read());
-
-                                            this.close_with_socket(&mut socket).await;
-                                            return
-                                        }
-                                    }
-                                }
-                            },
+                        let message = match read_result {
+                            Ok(message) => message,
                             Err(_) => {
                                 let peer_name = this.peer_service_name.read().clone();
                                 warn!("Failed to read peer `{}` message. Shutting him down", peer_name);
 
                                 this.close_with_socket(&mut socket).await;
                                 return
+                            }
+                        };
+
+                        match message.body() {
+                            // If got a response to a call, handle it by call_registry. Otherwise it's
+                            // an incoming call. Use [handle_bus_message]
+                            MessageBody::Response(_) => this.call_registry.resolve(message).await,
+                            _ => {
+                                let response = this.handle_peer_message(message).await;
+
+                                if let Err(_) = socket.write_all(response.bytes().as_slice()).await {
+                                    warn!("Failed to write peer `{}` response. Shutting him down", this.peer_service_name.read());
+
+                                    this.close_with_socket(&mut socket).await;
+                                    return
+                                }
                             }
                         }
                     },
