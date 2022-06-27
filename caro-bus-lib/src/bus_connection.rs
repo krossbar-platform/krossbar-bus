@@ -409,12 +409,16 @@ impl BusConnection {
     async fn handle_task_message(
         &mut self,
         socket: &mut UnixStream,
-        message: Message,
+        mut message: Message,
         callback: Sender<Message>,
     ) {
         match message.body() {
             MessageBody::ServiceMessage(ServiceMessage::Connect { .. }) => {
-                if let Err(_) = self.call_registry.call(socket, message, callback).await {
+                if let Err(_) = self
+                    .call_registry
+                    .call(socket, &mut message, &callback)
+                    .await
+                {
                     info!("Service connection received shutdown request");
                     drop(socket);
                     return;

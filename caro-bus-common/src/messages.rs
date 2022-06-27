@@ -56,7 +56,7 @@ impl Message {
         self.seq = seq;
     }
 
-    pub fn bytes(self) -> Vec<u8> {
+    pub fn bytes(&self) -> Vec<u8> {
         bson::to_raw_document_buf(&self).unwrap().into_bytes()
     }
 

@@ -48,8 +48,8 @@ impl CallRegistry {
     pub async fn call(
         &mut self,
         socket: &mut UnixStream,
-        mut message: Message,
-        callback: Sender<Message>,
+        message: &mut Message,
+        callback: &Sender<Message>,
     ) -> IoResult<()> {
         let seq = self.seq_counter.fetch_add(1, Ordering::SeqCst);
         message.seq = seq;
@@ -68,7 +68,7 @@ impl CallRegistry {
             seq,
             Call {
                 persistent,
-                callback,
+                callback: callback.clone(),
             },
         );
         Ok(())
