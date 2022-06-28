@@ -1,3 +1,5 @@
+use std::os::unix::prelude::RawFd;
+
 use bson::{self, Bson};
 use bytes::{Buf, BytesMut};
 use log::*;
@@ -126,6 +128,8 @@ pub enum ServiceMessage {
     /// If one Client performs connection, other Client receives this message to make
     /// p2p connection. Right after the messge we need to red peer UDS file descriptor
     IncomingPeerFd { peer_service_name: String },
+    /// This one is internal message to return incoming FD to a caller
+    PeerFd(RawFd),
 }
 
 impl IntoMessage for ServiceMessage {

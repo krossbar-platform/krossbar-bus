@@ -17,15 +17,13 @@ async fn main() {
 
     let mut state = bus.register_state(&"state".into(), 42).unwrap();
 
+    let states = vec![11, 42, 69];
+    let mut iter = states.into_iter().cycle();
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { return },
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                state.set(11);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                state.set(42);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                state.set(69);
+                state.set(iter.next().unwrap());
             }
         }
     }

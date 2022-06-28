@@ -1,6 +1,6 @@
 use std::{error::Error, io::ErrorKind};
 
-use log::error;
+use log::*;
 use tokio::sync::mpsc::{self, Sender};
 
 use caro_bus_common::messages::Message;
@@ -20,7 +20,7 @@ pub async fn call_task(
     match rx.recv().await {
         Some(message) => Ok(message),
         None => {
-            error!("Failed to receive response from a task. Channel closed");
+            warn!("Failed to receive response from a task. Channel closed");
             Err(Box::new(std::io::Error::new(
                 ErrorKind::BrokenPipe,
                 "Channel closed",

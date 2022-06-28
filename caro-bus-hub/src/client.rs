@@ -1,7 +1,8 @@
-use std::{io::ErrorKind, sync::Arc};
+use std::{io::ErrorKind, os::unix::prelude::IntoRawFd, sync::Arc};
 
 use bytes::BytesMut;
 use log::*;
+use nix::unistd::close as close_fd;
 use parking_lot::RwLock;
 use tokio::{
     io::AsyncWriteExt,
@@ -188,15 +189,21 @@ impl Client {
                     self.service_name()
                 );
 
-                if let Err(err) = socket.send_stream(stream).await {
+                let os_stream = stream.into_std().unwrap();
+                let fd = os_stream.into_raw_fd();
+
+                if let Err(err) = socket.send_fd(fd).await {
                     error!(
                         "Failed to send fd to the service `{:?}`: {}",
                         self.service_name(),
                         err.to_string()
                     );
+
                     return Err(err);
                 }
 
+                // We need this to transfer socket ownership to the peer
+                close_fd(fd).unwrap();
                 debug!("Successfully sent peer socket to `{}`", self.service_name());
             }
             HubReponse::Shutdown(message) => {

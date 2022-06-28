@@ -1,4 +1,13 @@
-use std::{collections::HashMap, error::Error, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    os::unix::{
+        net::UnixStream as OsStream,
+        prelude::{FromRawFd, RawFd},
+    },
+    sync::Arc,
+    time::Duration,
+};
 
 use bson::Bson;
 use bytes::BytesMut;
@@ -228,8 +237,9 @@ impl BusConnection {
                 // 1. Response::Error if service is not allowed to connect
                 // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
                 // Handle second case next
-                MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd { .. }) => {
+                MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
                     info!("Connection to `{}` succeded", peer_service_name);
+                    self.register_peer_fd(&peer_service_name, *fd, true);
                 }
                 // Hub doesn't allow connection
                 MessageBody::Response(Response::Error(err)) => {
@@ -573,19 +583,24 @@ impl BusConnection {
             MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd { peer_service_name }) => {
                 trace!("Incoming file descriptor for a peer: {}", peer_service_name);
 
-                if let Err(err) = self
-                    .receive_and_register_peer_fd(peer_service_name.clone(), socket)
-                    .await
-                {
-                    error!(
-                        "Failed to receive peer file descriptor: {}",
-                        err.to_string()
-                    );
-                    return None;
-                }
+                let fd = match socket.recv_fd().await {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        error!("Failed to receive peer fd: {}", err.to_string());
+                        return None;
+                    }
+                };
 
+                // If we have a call, use special service message to return file descriptor
+                // The caller can do whatewer he wants (connection requests registers new client,
+                // reconnection requests just updates its own socket with incoming one). If hub initiates
+                // connection, we register peer ourselves
                 if self.call_registry.has_call(message.seq()) {
-                    self.call_registry.resolve(message).await;
+                    self.call_registry
+                        .resolve(ServiceMessage::PeerFd(fd).into_message(message.seq()))
+                        .await;
+                } else {
+                    self.register_peer_fd(peer_service_name, fd, false);
                 }
             }
             // If got a response to a call, handle it by call_registry. Otherwise it's
@@ -598,37 +613,27 @@ impl BusConnection {
     }
 
     /// Well, receive client socket descriptor and create an entry in clients map
-    async fn receive_and_register_peer_fd(
-        &self,
-        peer_service_name: String,
-        socket: &mut UnixStream,
-    ) -> Result<Message, Box<dyn Error + Sync + Send>> {
-        match socket.recv_stream().await {
-            Ok(incoming_socket) => {
-                // Create new service connection handle. Can be used to handle own
-                // connection requests by just returning already existing handle
-                let new_service_connection = PeerConnection::new(
-                    self.service_name.read().clone(),
-                    peer_service_name.clone(),
-                    incoming_socket,
-                    self.task_tx.clone(),
-                );
+    fn register_peer_fd(&self, peer_service_name: &String, fd: RawFd, outgoing: bool) {
+        let os_stream = unsafe { OsStream::from_raw_fd(fd) };
+        let stream = UnixStream::from_std(os_stream).unwrap();
 
-                // Place the handle into the map of existing connections.
-                // Caller will use the map to return the handle to the client.
-                // See [connect] for the details
-                self.peers
-                    .try_write()
-                    .unwrap()
-                    .insert(peer_service_name, new_service_connection);
+        // Create new service connection handle. Can be used to handle own
+        // connection requests by just returning already existing handle
+        let new_service_connection = PeerConnection::new(
+            self.service_name.read().clone(),
+            peer_service_name.clone(),
+            stream,
+            self.task_tx.clone(),
+            outgoing,
+        );
 
-                Ok(Response::Ok.into_message(999))
-            }
-            Err(err) => {
-                error!("Failed to receive peer socket: {:?}", err);
-                Err(Box::new(err))
-            }
-        }
+        // Place the handle into the map of existing connections.
+        // Caller will use the map to return the handle to the client.
+        // See [connect] for the details
+        self.peers
+            .try_write()
+            .unwrap()
+            .insert(peer_service_name.clone(), new_service_connection);
     }
 
     pub async fn close(&mut self) {

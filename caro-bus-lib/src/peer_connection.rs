@@ -42,9 +42,16 @@ impl PeerConnection {
     pub fn new(
         service_name: String,
         peer_service_name: String,
-        socket: UnixStream,
+        stream: UnixStream,
         service_tx: TaskChannel,
+        outgoing: bool,
     ) -> Self {
+        info!(
+            "Registered new {} connection from {}",
+            if outgoing { "outgoing" } else { "incoming" },
+            peer_service_name
+        );
+
         let (task_tx, mut task_rx) = mpsc::channel(32);
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
@@ -58,27 +65,40 @@ impl PeerConnection {
         let result = this.clone();
 
         tokio::spawn(async move {
-            let mut peer_handle = Peer::new(peer_service_name, socket, service_tx);
+            let mut peer_handle = Peer::new(peer_service_name, stream, service_tx, outgoing);
 
             loop {
                 tokio::select! {
-                    // Read incoming message from the peer
-                    message = peer_handle.read_message() => {
-                        // Peer handle resolves call itself. If message returned, redirect to
-                        // the service connection
-                        let response = this.handle_peer_message(message).await;
+                    // Read incoming message from the peer. This one is tricky: if peer is alive, we always
+                    // send Some(message). If disconnected, we send Response::Shutdowm, and after that start
+                    // sending None to exclude peer handle from polling
+                    Some(message) = peer_handle.read_message() => {
+                        if matches!(message.body(), MessageBody::Response(Response::Shutdown(_))) {
+                            warn!("Peer connection closed. Shutting him down");
+                            this.close().await
+                        } else {
+                            // Peer handle resolves call itself. If message returned, redirect to
+                            // the service connection
+                            let response = this.handle_peer_message(message).await;
 
-                        let (callback_tx, mut callback_rx) = mpsc::channel(1);
-                        peer_handle.write_message(response, callback_tx).await;
-                        let _ = callback_rx.recv();
+                            let (callback_tx, mut _callback_rx) = mpsc::channel(1);
+                            if peer_handle.write_message(response, callback_tx).await.is_none() {
+                                warn!("Peer connection closed. Shutting down");
+                                this.close().await
+                            }
+                        }
                     },
                     // Handle method calls
                     Some((request, callback_tx)) = task_rx.recv() => {
                         trace!("Peer task message: {:?}", request);
 
-                        peer_handle.write_message(request, callback_tx).await;
+                        if peer_handle.write_message(request, callback_tx).await.is_none() {
+                            warn!("Peer connection closed. Shutting down");
+                            this.close().await
+                        }
                     },
                     Some(_) = shutdown_rx.recv() => {
+                        peer_handle.shutdown().await;
                         drop(peer_handle);
                         return
                     }
@@ -315,7 +335,7 @@ impl PeerConnection {
 
                         // Call self task to send signal message
                         if let Err(_) = utils::call_task(&self_tx, message).await {
-                            error!("Failed to send signal to a subscriber. Removing subscriber");
+                            warn!("Failed to send signal to a subscriber. Probably closed. Removing subscriber");
                             return;
                         }
                     }
@@ -363,6 +383,11 @@ impl PeerConnection {
 
 impl Drop for PeerConnection {
     fn drop(&mut self) {
+        trace!(
+            "Peer `{}` connection dropped",
+            self.peer_service_name.read()
+        );
+
         let shutdown_tx = self.shutdown_tx.clone();
 
         tokio::spawn(async move {
