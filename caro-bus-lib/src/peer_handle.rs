@@ -34,6 +34,8 @@ pub struct Peer {
     outgoing: bool,
     /// Peer state
     state: State,
+    /// Active subscriptions. Used after reconnection to resubscribe
+    subscriptions: Vec<(Message, Sender<Message>)>,
 }
 
 impl Peer {
@@ -46,6 +48,7 @@ impl Peer {
             call_registry: CallRegistry::new(),
             outgoing,
             state: State::Open,
+            subscriptions: Vec::new(),
         }
     }
 
@@ -91,8 +94,22 @@ impl Peer {
     ) -> Option<()> {
         match message.body() {
             MessageBody::MethodCall { .. } => self.call_reconnect(message, callback).await,
-            MessageBody::SignalSubscription { .. } => self.call_reconnect(message, callback).await,
-            MessageBody::StateSubscription { .. } => self.call_reconnect(message, callback).await,
+            MessageBody::SignalSubscription { .. } => {
+                // Save subscription in case we need to reconnect
+                if self.outgoing {
+                    self.subscriptions.push((message.clone(), callback.clone()));
+                }
+
+                self.call_reconnect(message, callback).await
+            }
+            MessageBody::StateSubscription { .. } => {
+                // Save subscription in case we need to reconnect
+                if self.outgoing {
+                    self.subscriptions.push((message.clone(), callback.clone()));
+                }
+
+                self.call_reconnect(message, callback).await
+            }
             MessageBody::Response(_) => self.write_reconnect(message, callback).await,
             m => {
                 error!("Invalid incoming message for a service: {:?}", m);
@@ -167,6 +184,8 @@ impl Peer {
 
     // TODO: Handle non-existing services
     async fn reconnect(&mut self) {
+        info!("Incoming request to reconnect to `{}`", self.name);
+
         loop {
             debug!("Trying to reconnect to `{}`", self.name);
 
@@ -181,6 +200,14 @@ impl Peer {
                             let os_stream = unsafe { OsStream::from_raw_fd(*fd) };
                             let stream = UnixStream::from_std(os_stream).unwrap();
                             self.socket = stream;
+
+                            info!("Succesfully reconnected to `{}`", self.name);
+
+                            // If failed to resubscribe, try to reconnect again
+                            if !self.resubscribe().await {
+                                continue;
+                            }
+
                             return;
                         }
                         m => {
@@ -199,6 +226,27 @@ impl Peer {
             warn!("Failed to reconnect `{}` peer. Scheduling retry", self.name);
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+    }
+
+    async fn resubscribe(&mut self) -> bool {
+        debug!("Trying to resubscribe to `{}`", self.name);
+
+        for (subscription_message, callback) in self.subscriptions.iter() {
+            if let Err(_) = self
+                .call_registry
+                .call(
+                    &mut self.socket,
+                    &mut subscription_message.clone(),
+                    &callback,
+                )
+                .await
+            {
+                return false;
+            }
+        }
+
+        info!("Succesfully resubscribed to `{}`", self.name);
+        true
     }
 }
 

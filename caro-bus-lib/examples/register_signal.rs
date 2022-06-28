@@ -17,13 +17,15 @@ async fn main() {
 
     let signal = bus.register_signal::<i64>(&"signal".into()).unwrap();
 
+    let mut increment = 0;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { return },
             _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                signal.emit(42);
-                signal.emit(11);
-                signal.emit(64);
+                signal.emit(42 + increment);
+                signal.emit(11 + increment);
+                signal.emit(64 + increment);
+                increment += 1
             }
         }
     }

@@ -13,7 +13,7 @@ use tokio::{
 
 use crate::{
     peer_handle::Peer,
-    utils::{self, TaskChannel},
+    utils::{self, dummy_tx, TaskChannel},
 };
 use caro_bus_common::{
     errors::Error as BusError,
@@ -71,7 +71,8 @@ impl PeerConnection {
                 tokio::select! {
                     // Read incoming message from the peer. This one is tricky: if peer is alive, we always
                     // send Some(message). If disconnected, we send Response::Shutdowm, and after that start
-                    // sending None to exclude peer handle from polling
+                    // sending None to exclude peer handle from polling. Also, this message is sent when a peer
+                    // shutting down gracefully
                     Some(message) = peer_handle.read_message() => {
                         if matches!(message.body(), MessageBody::Response(Response::Shutdown(_))) {
                             warn!("Peer connection closed. Shutting him down");
@@ -81,8 +82,7 @@ impl PeerConnection {
                             // the service connection
                             let response = this.handle_peer_message(message).await;
 
-                            let (callback_tx, mut _callback_rx) = mpsc::channel(1);
-                            if peer_handle.write_message(response, callback_tx).await.is_none() {
+                            if peer_handle.write_message(response, dummy_tx()).await.is_none() {
                                 warn!("Peer connection closed. Shutting down");
                                 this.close().await
                             }
@@ -98,6 +98,8 @@ impl PeerConnection {
                         }
                     },
                     Some(_) = shutdown_rx.recv() => {
+                        let shutdown_message = Response::Shutdown("Shutdown".into()).into_message(0);
+                        let _ = peer_handle.write_message(shutdown_message, dummy_tx()).await;
                         peer_handle.shutdown().await;
                         drop(peer_handle);
                         return
@@ -299,6 +301,8 @@ impl PeerConnection {
                                     }
                                 }
                             }
+                            // Subscriptions response Ok
+                            MessageBody::Response(Response::Ok) => {}
                             m => {
                                 error!("Invalid message inside signal handling code: {:?}", m);
                             }

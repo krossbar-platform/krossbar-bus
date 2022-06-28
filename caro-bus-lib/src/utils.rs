@@ -28,3 +28,8 @@ pub async fn call_task(
         }
     }
 }
+
+pub fn dummy_tx() -> Sender<Message> {
+    let (tx, _rx) = mpsc::channel(1);
+    tx
+}
