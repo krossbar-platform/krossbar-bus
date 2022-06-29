@@ -14,6 +14,11 @@ use uuid::Uuid;
 
 use crate::{client::Client, permissions::Permissions, Args};
 
+struct PendingConnectionRequest {
+    requester_service_name: String,
+    request: Message,
+}
+
 #[derive(Debug)]
 pub struct ClientRequest {
     pub uuid: Uuid,
@@ -28,6 +33,7 @@ pub struct Hub {
     anonymous_clients: HashMap<Uuid, Client>,
     clients: HashMap<String, Client>,
     permissions: Arc<Permissions>,
+    pending_connections: HashMap<String, Vec<PendingConnectionRequest>>,
 }
 
 impl Hub {
@@ -41,6 +47,7 @@ impl Hub {
             anonymous_clients: HashMap::new(),
             clients: HashMap::new(),
             permissions: Arc::new(Permissions::new(&args.service_files_dir)),
+            pending_connections: HashMap::new(),
         }
     }
 
@@ -101,24 +108,13 @@ impl Hub {
 
     async fn handle_client_call(&mut self, request: ClientRequest) {
         match request.message.body() {
-            MessageBody::ServiceMessage(ServiceMessage::Register {
-                protocol_version: _,
-                service_name,
-            }) => {
-                self.handle_client_registration(
-                    request.uuid,
-                    service_name.clone(),
-                    request.message.seq(),
-                )
-                .await
+            MessageBody::ServiceMessage(ServiceMessage::Register { .. }) => {
+                self.handle_client_registration(request.uuid, request.message)
+                    .await
             }
-            MessageBody::ServiceMessage(ServiceMessage::Connect { peer_service_name }) => {
-                self.handle_new_connection_request(
-                    request.service_name,
-                    peer_service_name.clone(),
-                    request.message.seq(),
-                )
-                .await
+            MessageBody::ServiceMessage(ServiceMessage::Connect { .. }) => {
+                self.handle_new_connection_request(request.service_name, request.message)
+                    .await
             }
             MessageBody::Response(Response::Shutdown(_)) => {
                 self.handle_disconnection(&request.uuid, &request.service_name)
@@ -133,7 +129,15 @@ impl Hub {
         }
     }
 
-    async fn handle_client_registration(&mut self, uuid: Uuid, service_name: String, seq: u64) {
+    async fn handle_client_registration(&mut self, uuid: Uuid, request: Message) {
+        let (_, service_name) = match request.body() {
+            MessageBody::ServiceMessage(ServiceMessage::Register {
+                protocol_version,
+                service_name,
+            }) => (protocol_version, service_name),
+            _ => panic!("Should never happen"),
+        };
+
         trace!(
             "Trying to assign service name `{}` to a client with uuid {}",
             service_name,
@@ -142,22 +146,45 @@ impl Hub {
 
         match self.anonymous_clients.remove(&uuid) {
             Some(mut client) => {
-                if self.clients.contains_key(&service_name) {
+                if self.clients.contains_key(service_name) {
                     error!(
                         "Failed to register a client with name `{}`. Already exists",
                         service_name
                     );
 
                     client
-                        .send_message(&service_name, BusError::NameRegistered.into_message(seq))
+                        .send_message(
+                            &service_name,
+                            BusError::NameRegistered.into_message(request.seq()),
+                        )
                         .await;
                 } else {
                     info!("Succesfully registered new client: `{}`", service_name);
 
                     client
-                        .send_message(&service_name, Response::Ok.into_message(seq))
+                        .send_message(&service_name, Response::Ok.into_message(request.seq()))
                         .await;
-                    self.clients.insert(service_name, client);
+                    self.clients.insert(service_name.clone(), client);
+
+                    // Check if we have pending connections to the client.
+                    // If we do, we resolve all connection request by sending response
+                    if let Some(pending_connection_requests) =
+                        self.pending_connections.remove(service_name)
+                    {
+                        for request in pending_connection_requests {
+                            trace!(
+                                "Resolving connection request to {} from {}",
+                                service_name,
+                                request.requester_service_name
+                            );
+
+                            self.handle_new_connection_request(
+                                request.requester_service_name,
+                                request.request,
+                            )
+                            .await;
+                        }
+                    }
 
                     trace!("New named clients count: {}", self.clients.len());
                 }
@@ -175,9 +202,16 @@ impl Hub {
     async fn handle_new_connection_request(
         &mut self,
         requester_service_name: String,
-        target_service_name: String,
-        seq: u64,
+        request: Message,
     ) {
+        let (target_service_name, await_connection) = match request.body() {
+            MessageBody::ServiceMessage(ServiceMessage::Connect {
+                peer_service_name,
+                await_connection,
+            }) => (peer_service_name, await_connection),
+            _ => panic!("Should never happen"),
+        };
+
         trace!(
             "Trying to connect `{}` to the {}",
             requester_service_name,
@@ -187,28 +221,70 @@ impl Hub {
         let (left, right) = UnixStream::pair().unwrap();
 
         {
-            // Service to which our client wants to connect is not registered
-            if !self.clients.contains_key(&target_service_name) {
+            // No service file for the service
+            if !self.permissions.service_file_exists(target_service_name) {
                 warn!(
-                    "Failed to find a service `{:?}` to connect with `{:?}`",
-                    target_service_name, requester_service_name
+                    "`{}` wants to connect to `{}`, which doesn't exist",
+                    requester_service_name, target_service_name
                 );
 
                 self.client(&requester_service_name)
-                    .send_message(&target_service_name, BusError::NotFound.into_message(seq))
+                    .send_message(
+                        &target_service_name,
+                        BusError::ServiceNotFound.into_message(request.seq()),
+                    )
                     .await;
                 return;
             }
 
-            if requester_service_name == target_service_name {
+            if requester_service_name == *target_service_name {
                 warn!(
                     "Service `{:?}` tries to connect to himself",
                     target_service_name,
                 );
 
                 self.client(&requester_service_name)
-                    .send_message(&target_service_name, BusError::NotAllowed.into_message(seq))
+                    .send_message(
+                        &target_service_name,
+                        BusError::NotAllowed.into_message(request.seq()),
+                    )
                     .await;
+                return;
+            }
+
+            // Service to which our client wants to connect is not registered
+            if !self.clients.contains_key(target_service_name) {
+                // Peer doesn't want to wait for connection
+                if !await_connection {
+                    warn!(
+                        "Failed to find a service `{:?}` to connect with `{:?}`",
+                        target_service_name, requester_service_name
+                    );
+
+                    self.client(&requester_service_name)
+                        .send_message(
+                            &target_service_name,
+                            BusError::ServiceNotRegisterd.into_message(request.seq()),
+                        )
+                        .await;
+                    return;
+                }
+
+                // Peer wants to wait for a connection if service still not registered.
+                // Add it to the pending list and return. Now client is sitting and waiting for
+                // the response. See `handle_client_registration` for resolving code
+                info!(
+                    "Adding new pending connection from {} to {}",
+                    requester_service_name, target_service_name
+                );
+
+                self.pending_connections
+                    .entry(target_service_name.clone())
+                    .or_insert(vec![])
+                    .push(PendingConnectionRequest {
+                        requester_service_name,
+                        request,
+                    });
                 return;
             }
 
@@ -216,7 +292,7 @@ impl Hub {
             let message = ServiceMessage::IncomingPeerFd {
                 peer_service_name: target_service_name.clone(),
             }
-            .into_message(seq);
+            .into_message(request.seq());
             self.client(&requester_service_name)
                 .send_connection_fd(message, &target_service_name, left)
                 .await;
@@ -227,7 +303,7 @@ impl Hub {
         let message = ServiceMessage::IncomingPeerFd {
             peer_service_name: requester_service_name.clone(),
         }
-        .into_message(seq);
+        .into_message(request.seq());
         self.client(&target_service_name)
             .send_connection_fd(message, &requester_service_name, right)
             .await;

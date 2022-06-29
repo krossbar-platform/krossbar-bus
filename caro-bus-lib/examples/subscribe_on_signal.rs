@@ -14,7 +14,7 @@ async fn main() {
         .unwrap();
 
     let mut peer_connection = bus
-        .connect("com.examples.register_signal".into())
+        .connect_await("com.examples.register_signal".into())
         .await
         .unwrap();
 

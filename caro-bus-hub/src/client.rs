@@ -234,22 +234,11 @@ impl Client {
 
         if let MessageBody::ServiceMessage(request) = message.body() {
             match request {
-                ServiceMessage::Register {
-                    protocol_version,
-                    service_name,
-                } => {
-                    self.handle_registration_message(
-                        user_credentials,
-                        *protocol_version,
-                        service_name.clone(),
-                        message.seq(),
-                    )
-                    .await
-                }
-                ServiceMessage::Connect { peer_service_name } => {
-                    self.handle_connect_message(peer_service_name.clone(), message.seq())
+                ServiceMessage::Register { .. } => {
+                    self.handle_registration_message(user_credentials, message)
                         .await
                 }
+                ServiceMessage::Connect { .. } => self.handle_connect_message(message).await,
                 m => {
                     warn!("Invalid message from a client: {:?}", m);
                     None
@@ -265,13 +254,19 @@ impl Client {
     async fn handle_registration_message(
         &mut self,
         user_credentials: UCred,
-        protocol_version: i64,
-        service_name: String,
-        seq: u64,
+        request: Message,
     ) -> Option<Message> {
-        if protocol_version != messages::PROTOCOL_VERSION {
+        let (protocol_version, service_name) = match request.body() {
+            MessageBody::ServiceMessage(ServiceMessage::Register {
+                protocol_version,
+                service_name,
+            }) => (protocol_version, service_name),
+            _ => panic!("Should never happen"),
+        };
+
+        if *protocol_version != messages::PROTOCOL_VERSION {
             warn!("Client with invalid protocol: {}", self.uuid);
-            return Some(BusError::InvalidProtocol.into_message(seq));
+            return Some(BusError::InvalidProtocol.into_message(request.seq()));
         }
 
         if let Err(err) = self
@@ -282,7 +277,7 @@ impl Client {
                 "Client is not allowed to register with name `{:?}`: {}",
                 service_name, err
             );
-            return Some(err.into_message(seq));
+            return Some(err.into_message(request.seq()));
         }
 
         // Service requested new service_name. We update our service name here.
@@ -294,24 +289,21 @@ impl Client {
             self.uuid
         );
 
-        self.send_message_to_hub(
-            ServiceMessage::Register {
-                protocol_version,
-                service_name,
-            }
-            .into_message(seq),
-        )
-        .await;
+        self.send_message_to_hub(request).await;
 
         None
     }
 
     // handle incoming client connection request
-    async fn handle_connect_message(
-        &mut self,
-        peer_service_name: String,
-        seq: u64,
-    ) -> Option<Message> {
+    async fn handle_connect_message(&mut self, request: Message) -> Option<Message> {
+        let (peer_service_name, _) = match request.body() {
+            MessageBody::ServiceMessage(ServiceMessage::Connect {
+                peer_service_name,
+                await_connection,
+            }) => (peer_service_name, await_connection),
+            _ => panic!("Should never happen"),
+        };
+
         let self_service_name = self.service_name.read().clone();
 
         if let Err(err) = self
@@ -322,12 +314,11 @@ impl Client {
                 "Client `{:?}` is not allowed to connect with `{:?}`: {}",
                 self_service_name, peer_service_name, err
             );
-            return Some(err.into_message(seq));
+            return Some(err.into_message(request.seq()));
         }
 
         // Notify hub about connection request
-        self.send_message_to_hub(ServiceMessage::Connect { peer_service_name }.into_message(seq))
-            .await;
+        self.send_message_to_hub(request).await;
 
         None
     }

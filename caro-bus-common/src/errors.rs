@@ -7,7 +7,9 @@ pub enum Error {
     #[error("Not allowed")]
     NotAllowed,
     #[error("Service not found")]
-    NotFound,
+    ServiceNotFound,
+    #[error("Service not registered yet")]
+    ServiceNotRegisterd,
     #[error("Service with this name is already registered")]
     NameRegistered,
     #[error("Method, Signal, or State with a given name already registered")]

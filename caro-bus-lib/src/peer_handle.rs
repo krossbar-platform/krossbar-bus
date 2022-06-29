@@ -189,7 +189,7 @@ impl Peer {
         loop {
             debug!("Trying to reconnect to `{}`", self.name);
 
-            let connection_message = Message::new_connection(self.name.clone());
+            let connection_message = Message::new_connection(self.name.clone(), true);
 
             // Request service connection to send connection message
             match utils::call_task(&self.service_tx, connection_message).await {

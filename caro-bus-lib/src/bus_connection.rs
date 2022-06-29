@@ -215,10 +215,29 @@ impl BusConnection {
     /// Perform connection to an another service.
     /// The method may fail if:
     /// 1. The service is not allowed to connect to a target service
-    /// 2. Target service is not registered
+    /// 2. Target service is not registered or doesn't exist
     pub async fn connect(
         &mut self,
         peer_service_name: String,
+    ) -> Result<PeerConnection, Box<dyn Error>> {
+        self.connect_perform(peer_service_name, false).await
+    }
+
+    /// Perform connection to an another service.
+    /// The method may fail if:
+    /// 1. The service is not allowed to connect to a target service
+    /// 2. Target service doesn't exist
+    pub async fn connect_await(
+        &mut self,
+        peer_service_name: String,
+    ) -> Result<PeerConnection, Box<dyn Error>> {
+        self.connect_perform(peer_service_name, true).await
+    }
+
+    async fn connect_perform(
+        &mut self,
+        peer_service_name: String,
+        await_connection: bool,
     ) -> Result<PeerConnection, Box<dyn Error>> {
         debug!("Connecting to a service `{}`", peer_service_name);
 
@@ -227,7 +246,7 @@ impl BusConnection {
         if !self.peers.read().contains_key(&peer_service_name) {
             match utils::call_task(
                 &self.task_tx,
-                Message::new_connection(peer_service_name.clone()),
+                Message::new_connection(peer_service_name.clone(), await_connection),
             )
             .await
             .map_err(|e| e as Box<dyn Error>)?

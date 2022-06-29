@@ -88,6 +88,14 @@ impl Permissions {
         }
     }
 
+    pub fn service_file_exists(&self, service_name: &String) -> bool {
+        let service_file_name = self
+            .service_files_dir
+            .join(format!("{}.service", service_name));
+
+        service_file_name.as_path().exists()
+    }
+
     fn read_allowed_execs(&self, service_name: &String) -> Result<Pattern, BusError> {
         let json = self.parse_service_file_json(service_name)?;
 

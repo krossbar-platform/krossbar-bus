@@ -72,10 +72,13 @@ impl Message {
         }
     }
 
-    pub fn new_connection(peer_service_name: String) -> Self {
+    pub fn new_connection(peer_service_name: String, await_connection: bool) -> Self {
         Self {
             seq: INVALID_SEQ,
-            body: MessageBody::ServiceMessage(ServiceMessage::Connect { peer_service_name }),
+            body: MessageBody::ServiceMessage(ServiceMessage::Connect {
+                peer_service_name,
+                await_connection,
+            }),
         }
     }
 
@@ -124,7 +127,11 @@ pub enum ServiceMessage {
         service_name: String,
     },
     /// Client sends message to Hub to connect to *peer_service_name*
-    Connect { peer_service_name: String },
+    /// If **await_connection** hub will be waiting for service to start
+    Connect {
+        peer_service_name: String,
+        await_connection: bool,
+    },
     /// If one Client performs connection, other Client receives this message to make
     /// p2p connection. Right after the messge we need to red peer UDS file descriptor
     IncomingPeerFd { peer_service_name: String },
