@@ -6,6 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-trait = "0.1"
+async-recursion = "1.0.0"
 bson = "2.3"
 bytes = "1.1"
 # TODO: Limit fetures
@@ -14,7 +16,6 @@ parking_lot = "0.12"
 log = "0.4"
 tokio-send-fd = "0.9"
 serde = "1.0"
-async-trait = "0.1"
 
 caro-bus-common = { path = "../caro-bus-common" }
 

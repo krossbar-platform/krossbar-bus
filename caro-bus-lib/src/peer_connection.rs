@@ -1,407 +1,259 @@
-use std::{error::Error, fmt::Debug, sync::Arc};
+use std::os::unix::{net::UnixStream as OsStream, prelude::FromRawFd};
+use std::time::Duration;
 
-use log::*;
-use parking_lot::RwLock;
-use serde::{de::DeserializeOwned, Serialize};
-use tokio::{
-    net::UnixStream,
-    sync::{
-        broadcast::Receiver as BroadcastReceiver,
-        mpsc::{self, Receiver, Sender},
-    },
-};
-
-use crate::{
-    peer_handle::Peer,
-    utils::{self, dummy_tx, TaskChannel},
-};
+use bytes::BytesMut;
 use caro_bus_common::{
-    errors::Error as BusError,
-    messages::{self, IntoMessage, Message, MessageBody, Response},
+    call_registry::CallRegistry,
+    messages::{IntoMessage, Message, MessageBody, Response, ServiceMessage},
+    net,
 };
+use log::*;
+use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc::Sender};
 
-type Shared<T> = Arc<RwLock<T>>;
+use crate::utils::{self, TaskChannel};
 
-/// P2p service connection handle
-#[derive(Clone)]
+#[derive(Eq, PartialEq)]
+enum State {
+    Open,
+    Closed,
+    Reconnecting,
+}
+
 pub struct PeerConnection {
-    /// Own service name
-    service_name: Shared<String>,
-    /// Peer service name
-    peer_service_name: Shared<String>,
-    /// Sender to forward calls to the service
-    service_tx: TaskChannel,
-    /// Sender to make calls into the task
-    task_tx: TaskChannel,
-    /// Sender to shutdown peer connection
-    shutdown_tx: Sender<()>,
+    name: String,
+    // Peer socket
+    socket: UnixStream,
+    /// Sender to forward calls to the service. Used to reconnect
+    hub_tx: TaskChannel,
+    /// Buffer to read incoming messages
+    read_buffer: BytesMut,
+    /// Registry to make calls and send responses to proper callers
+    /// Includes methods, signals, and states
+    call_registry: CallRegistry,
+    /// Only outgoing connections will reconnect
+    outgoing: bool,
+    /// Peer state
+    state: State,
+    /// Active subscriptions. Used after reconnection to resubscribe
+    subscriptions: Vec<(Message, Sender<Message>)>,
 }
 
 impl PeerConnection {
-    /// Create new service handle and start tokio task to handle incoming messages from the peer
-    pub fn new(
-        service_name: String,
-        peer_service_name: String,
-        stream: UnixStream,
-        service_tx: TaskChannel,
-        outgoing: bool,
-    ) -> Self {
-        info!(
-            "Registered new {} connection from {}",
-            if outgoing { "outgoing" } else { "incoming" },
-            peer_service_name
-        );
-
-        let (task_tx, mut task_rx) = mpsc::channel(32);
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
-
-        let mut this = Self {
-            service_name: Arc::new(RwLock::new(service_name)),
-            peer_service_name: Arc::new(RwLock::new(peer_service_name.clone())),
-            service_tx: service_tx.clone(),
-            task_tx,
-            shutdown_tx,
-        };
-        let result = this.clone();
-
-        tokio::spawn(async move {
-            let mut peer_handle = Peer::new(peer_service_name, stream, service_tx, outgoing);
-
-            loop {
-                tokio::select! {
-                    // Read incoming message from the peer. This one is tricky: if peer is alive, we always
-                    // send Some(message). If disconnected, we send Response::Shutdowm, and after that start
-                    // sending None to exclude peer handle from polling. Also, this message is sent when a peer
-                    // shutting down gracefully
-                    Some(message) = peer_handle.read_message() => {
-                        if matches!(message.body(), MessageBody::Response(Response::Shutdown(_))) {
-                            warn!("Peer connection closed. Shutting him down");
-                            this.close().await
-                        } else {
-                            // Peer handle resolves call itself. If message returned, redirect to
-                            // the service connection
-                            let response = this.handle_peer_message(message).await;
-
-                            if peer_handle.write_message(response, dummy_tx()).await.is_none() {
-                                warn!("Peer connection closed. Shutting down");
-                                this.close().await
-                            }
-                        }
-                    },
-                    // Handle method calls
-                    Some((request, callback_tx)) = task_rx.recv() => {
-                        trace!("Peer task message: {:?}", request);
-
-                        if peer_handle.write_message(request, callback_tx).await.is_none() {
-                            warn!("Peer connection closed. Shutting down");
-                            this.close().await
-                        }
-                    },
-                    Some(_) = shutdown_rx.recv() => {
-                        let shutdown_message = Response::Shutdown("Shutdown".into()).into_message(0);
-                        let _ = peer_handle.write_message(shutdown_message, dummy_tx()).await;
-                        peer_handle.shutdown().await;
-                        drop(peer_handle);
-                        return
-                    }
-                };
-            }
-        });
-
-        result
+    pub fn new(name: String, socket: UnixStream, hub_tx: TaskChannel, outgoing: bool) -> Self {
+        Self {
+            name,
+            socket,
+            hub_tx,
+            read_buffer: BytesMut::with_capacity(64),
+            call_registry: CallRegistry::new(),
+            outgoing,
+            state: State::Open,
+            subscriptions: Vec::new(),
+        }
     }
 
-    /// Remote method call
-    pub async fn call<P: Serialize, R: DeserializeOwned>(
-        &mut self,
-        method_name: &String,
-        params: &P,
-    ) -> Result<R, Box<dyn Error + Sync + Send>> {
-        let message = Message::new_call(
-            self.peer_service_name.read().clone(),
-            method_name.clone(),
-            params,
-        );
+    pub async fn read_message(&mut self) -> Option<Message> {
+        if self.state == State::Closed {
+            return None;
+        }
 
-        // Send method call request
-        let response = utils::call_task(&self.task_tx, message).await;
-
-        match response {
-            Ok(message) => match message.body() {
-                // Succesfully performed remote method call
-                MessageBody::Response(Response::Return(data)) => {
-                    match bson::from_bson::<R>(data.clone()) {
-                        Ok(data) => Ok(data),
-                        Err(err) => {
-                            error!("Can't deserialize method response: {}", err.to_string());
-                            Err(Box::new(BusError::InvalidResponse))
-                        }
+        loop {
+            match net::read_message_from_socket(&mut self.socket, &mut self.read_buffer).await {
+                Ok(message) => {
+                    match message.body() {
+                        // If got a response to a call, handle it by call_registry. Otherwise it's
+                        // an incoming call. Use [handle_bus_message]
+                        MessageBody::Response(_) => self.call_registry.resolve(message).await,
+                        _ => return Some(message),
                     }
                 }
-                // Got an error from the peer
-                MessageBody::Response(Response::Error(err)) => {
+                Err(err) => {
                     warn!(
-                        "Failed to perform a call to `{}::{}`: {}",
-                        self.peer_service_name.read(),
-                        method_name,
+                        "Error reading from peer socket: {}. Trying to reconnect",
                         err.to_string()
                     );
-                    Err(Box::new(err.clone()))
-                }
-                // Invalid protocol
-                r => {
-                    error!("Invalid Ok response for a method call: {:?}", r);
-                    Err(Box::new(BusError::InvalidMessage))
-                }
-            },
-            // Network error
-            Err(e) => {
-                error!("Ivalid error response from a method call: {:?}", e);
-                Err(e)
-            }
-        }
-    }
 
-    /// Remote signal subscription
-    pub async fn subscribe<T: DeserializeOwned>(
-        &mut self,
-        signal_name: &String,
-        callback: impl Fn(&T) + Send + 'static,
-    ) -> Result<(), Box<dyn Error + Sync + Send>> {
-        let message =
-            Message::new_subscription(self.service_name.read().clone(), signal_name.clone());
-
-        let (response, rx) = self.make_subscription_call(message, signal_name).await?;
-
-        match response.body() {
-            // Succesfully performed remote method call
-            MessageBody::Response(Response::Ok) => {
-                debug!("Succesfully subscribed to the signal `{}`", signal_name);
-
-                PeerConnection::start_subscription_receiving_task(signal_name, rx, callback);
-
-                Ok(())
-            }
-            // Invalid protocol
-            r => {
-                error!("Invalid Ok response for a signal subscription: {:?}", r);
-                Err(Box::new(BusError::InvalidMessage))
-            }
-        }
-    }
-
-    /// Start watching remote state changes
-    /// "Returns" current state value
-    pub async fn watch<T: DeserializeOwned>(
-        &mut self,
-        state_name: &String,
-        callback: impl Fn(&T) + Send + 'static,
-    ) -> Result<T, Box<dyn Error + Sync + Send>> {
-        let message = Message::new_watch(self.service_name.read().clone(), state_name.clone());
-
-        let (response, rx) = self.make_subscription_call(message, state_name).await?;
-
-        match response.body() {
-            // Succesfully performed remote method call
-            MessageBody::Response(Response::StateChanged(data)) => {
-                let state = match bson::from_bson::<T>(data.clone()) {
-                    Ok(data) => Ok(data),
-                    Err(err) => {
-                        error!("Can't deserialize state response: {}", err.to_string());
-                        Err(Box::new(BusError::InvalidResponse))
+                    if self.outgoing {
+                        self.state = State::Reconnecting;
+                        self.reconnect().await;
+                        continue;
                     }
-                }?;
 
-                debug!("Succesfully started watching state `{}`", state_name);
-
-                PeerConnection::start_subscription_receiving_task(state_name, rx, callback);
-
-                Ok(state)
-            }
-            // Invalid protocol
-            r => {
-                error!("Invalid Ok response for a signal subscription: {:?}", r);
-                Err(Box::new(BusError::InvalidMessage))
+                    self.state = State::Closed;
+                    // Ask service to close connection
+                    return Some(Response::Shutdown("Peer socket closed".into()).into_message(0));
+                }
             }
         }
     }
 
-    /// Make subscription call and get result
-    /// Used for both: signals and states
-    pub async fn make_subscription_call(
+    pub async fn write_message(
         &mut self,
         message: Message,
-        signal_name: &String,
-    ) -> Result<(Message, Receiver<Message>), Box<dyn Error + Sync + Send>> {
-        // This is a tricky one. First we use channel to read subscription status, and after that
-        // for incomin signal emission
-        let (tx, mut rx) = mpsc::channel(10);
+        callback: Sender<Message>,
+    ) -> Option<()> {
+        match message.body() {
+            MessageBody::MethodCall { .. } => self.call_reconnect(message, callback).await,
+            MessageBody::SignalSubscription { .. } => {
+                // Save subscription in case we need to reconnect
+                if self.outgoing {
+                    self.subscriptions.push((message.clone(), callback.clone()));
+                }
 
-        // Send subscription request
-        self.task_tx.send((message, tx)).await?;
-
-        let response = rx.recv().await.unwrap();
-
-        match response.body() {
-            // Got an error from the peer
-            MessageBody::Response(Response::Error(err)) => {
-                warn!(
-                    "Failed to subscribe to `{}::{}`: {}",
-                    self.peer_service_name.read(),
-                    signal_name,
-                    err.to_string()
-                );
-                Err(Box::new(err.clone()))
+                self.call_reconnect(message, callback).await
             }
-            // Invalid protocol
-            _ => Ok((response, rx)),
+            MessageBody::StateSubscription { .. } => {
+                // Save subscription in case we need to reconnect
+                if self.outgoing {
+                    self.subscriptions.push((message.clone(), callback.clone()));
+                }
+
+                self.call_reconnect(message, callback).await
+            }
+            MessageBody::Response(_) => self.write_reconnect(message, callback).await,
+            m => {
+                error!("Invalid incoming message for a service: {:?}", m);
+                None
+            }
         }
     }
 
-    /// Start task to receive signals emission, state changes and calling user callback
-    fn start_subscription_receiving_task<T: DeserializeOwned>(
-        signal_name: &String,
-        mut receiver: Receiver<Message>,
-        callback: impl Fn(&T) + Send + 'static,
-    ) {
-        let signal_name = signal_name.clone();
+    pub async fn shutdown(&mut self) {
+        trace!("Shutting down peer `{}` handle", self.name);
 
-        // Start listening to signal emissions
-        tokio::spawn(async move {
-            loop {
-                match receiver.recv().await {
-                    Some(message) => {
-                        match message.body() {
-                            // Signal
-                            MessageBody::Response(Response::Signal(value)) => {
-                                match bson::from_bson::<T>(value.clone()) {
-                                    Ok(value) => {
-                                        // Call back
-                                        callback(&value);
-                                    }
-                                    Err(err) => {
-                                        error!(
-                                            "Failed to deserialize signal value: {}",
-                                            err.to_string()
-                                        );
-                                    }
-                                }
-                            }
-                            MessageBody::Response(Response::StateChanged(value)) => {
-                                match bson::from_bson::<T>(value.clone()) {
-                                    Ok(value) => {
-                                        // Call back
-                                        callback(&value);
-                                    }
-                                    Err(err) => {
-                                        error!(
-                                            "Failed to deserialize state value: {}",
-                                            err.to_string()
-                                        );
-                                    }
-                                }
-                            }
-                            // Subscriptions response Ok
-                            MessageBody::Response(Response::Ok) => {}
-                            m => {
-                                error!("Invalid message inside signal handling code: {:?}", m);
-                            }
-                        }
-                    }
-                    None => {
-                        error!(
-                            "Failed to listen to signal `{}` subscription. Cancelling",
-                            signal_name
-                        );
-                        return;
-                    }
-                }
-            }
-        });
+        let _ = self.socket.shutdown().await;
+        drop(&self.socket);
     }
 
-    /// Start subscription task, which polls signal Receiver and sends peer message
-    /// if emited
-    pub(crate) fn start_signal_sending_task(
-        &self,
-        mut signal_receiver: BroadcastReceiver<Message>,
-        seq: u64,
-    ) {
-        let self_tx = self.task_tx.clone();
+    /// Signal or state change. If function fails to write into the socket, it tries to
+    /// reconnect, but drops response mpsc sender, because even if reconnected, new peer
+    /// will try to resibscribe, and current subscription becomes invalid
+    async fn write_reconnect(&mut self, message: Message, callback: Sender<Message>) -> Option<()> {
+        while let Err(err) = self.socket.write_all(message.bytes().as_slice()).await {
+            warn!(
+                "Failed to send write a message to the peer `{}`: {}",
+                self.name,
+                err.to_string()
+            );
 
-        tokio::spawn(async move {
-            loop {
-                // Wait for signal emission
-                match signal_receiver.recv().await {
-                    Ok(mut message) => {
-                        // Replace seq with subscription seq
-                        message.update_seq(seq);
+            // Drops callback, because current subscription became invalid. See function comment
+            drop(callback);
 
-                        // Call self task to send signal message
-                        if let Err(_) = utils::call_task(&self_tx, message).await {
-                            warn!("Failed to send signal to a subscriber. Probably closed. Removing subscriber");
+            if self.outgoing {
+                self.state = State::Reconnecting;
+                self.reconnect().await;
+                return Some(());
+            } else {
+                self.state = State::Closed;
+                return None;
+            }
+        }
+
+        let _ = callback.send(Response::Ok.into_message(0)).await;
+        Some(())
+    }
+
+    async fn call_reconnect(
+        &mut self,
+        mut message: Message,
+        callback: Sender<Message>,
+    ) -> Option<()> {
+        while let Err(err) = self
+            .call_registry
+            .call(&mut self.socket, &mut message, &callback)
+            .await
+        {
+            warn!(
+                "Failed to make a call to the peer `{}`: {}",
+                self.name,
+                err.to_string()
+            );
+
+            if self.outgoing {
+                self.state = State::Reconnecting;
+                self.reconnect().await;
+                return Some(());
+            } else {
+                self.state = State::Closed;
+                return None;
+            }
+        }
+
+        Some(())
+    }
+
+    // TODO: Handle non-existing services
+    async fn reconnect(&mut self) {
+        info!("Incoming request to reconnect to `{}`", self.name);
+
+        loop {
+            debug!("Trying to reconnect to `{}`", self.name);
+
+            let connection_message = Message::new_connection(self.name.clone(), true);
+
+            // Request service connection to send connection message
+            match utils::call_task(&self.hub_tx, connection_message).await {
+                Ok(message) => {
+                    match message.body() {
+                        // This is a message we should receive if succesfully reconnected
+                        MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
+                            let os_stream = unsafe { OsStream::from_raw_fd(*fd) };
+                            let stream = UnixStream::from_std(os_stream).unwrap();
+                            self.socket = stream;
+
+                            info!("Succesfully reconnected to `{}`", self.name);
+
+                            // If failed to resubscribe, try to reconnect again
+                            if !self.resubscribe().await {
+                                continue;
+                            }
+
                             return;
                         }
-                    }
-                    Err(err) => {
-                        error!("Signal receiver error: {:?}", err);
-                        return;
+                        m => {
+                            debug!("Reconnection response: {:?}", m);
+                        }
                     }
                 }
+                Err(err) => {
+                    error!(
+                        "Failed to receive response for reconnection request: {}",
+                        err.to_string()
+                    );
+                }
             }
-        });
-    }
 
-    /// Handle messages from the peer
-    async fn handle_peer_message(&mut self, message: messages::Message) -> Message {
-        trace!("Incoming client message: {:?}", message);
-
-        let response_seq = message.seq();
-
-        match utils::call_task(&self.service_tx, message).await {
-            Ok(response) => response,
-            Err(err) => {
-                warn!(
-                    "Error return as a result of peer message handling: {}",
-                    err.to_string()
-                );
-
-                BusError::Internal.into_message(response_seq)
-            }
+            warn!("Failed to reconnect `{}` peer. Scheduling retry", self.name);
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 
-    pub async fn close(&mut self) {
-        let self_name = self.peer_service_name.read().clone();
-        debug!(
-            "Shutting down peer connection to `{:?}`",
-            self.peer_service_name.read()
-        );
+    async fn resubscribe(&mut self) -> bool {
+        debug!("Trying to resubscribe to `{}`", self.name);
 
-        let _ = utils::call_task(
-            &self.service_tx,
-            Response::Shutdown(self_name.clone()).into_message(0),
-        );
+        for (subscription_message, callback) in self.subscriptions.iter() {
+            if let Err(_) = self
+                .call_registry
+                .call(
+                    &mut self.socket,
+                    &mut subscription_message.clone(),
+                    &callback,
+                )
+                .await
+            {
+                return false;
+            }
+        }
+
+        info!("Succesfully resubscribed to `{}`", self.name);
+        true
     }
 }
 
 impl Drop for PeerConnection {
     fn drop(&mut self) {
-        trace!(
-            "Peer `{}` connection dropped",
-            self.peer_service_name.read()
-        );
+        trace!("Peer `{}` handle dropped", self.name);
 
-        let shutdown_tx = self.shutdown_tx.clone();
-
-        tokio::spawn(async move {
-            let _ = shutdown_tx.send(()).await;
-        });
-    }
-}
-
-impl Debug for PeerConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Peer connection to {}", self.peer_service_name.read())
+        drop(&self.socket)
     }
 }

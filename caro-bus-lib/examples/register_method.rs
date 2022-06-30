@@ -1,7 +1,7 @@
 use log::LevelFilter;
 use tokio;
 
-use caro_bus_lib::BusConnection;
+use caro_bus_lib::Bus;
 
 #[tokio::main]
 async fn main() {
@@ -9,7 +9,7 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut bus = BusConnection::register("com.examples.register_method".into())
+    let mut bus = Bus::register("com.examples.register_method".into())
         .await
         .unwrap();
 
