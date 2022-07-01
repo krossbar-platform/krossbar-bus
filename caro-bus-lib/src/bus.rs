@@ -5,12 +5,11 @@ use std::{
         net::UnixStream as OsStream,
         prelude::{FromRawFd, RawFd},
     },
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use bson::Bson;
 use log::*;
-use parking_lot::RwLock;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     net::UnixStream,
@@ -155,7 +154,7 @@ impl Bus {
 
         // We may have already connected peer. So first we check if connected
         // and if not, perform connection request
-        if !self.peers.read().contains_key(&peer_service_name) {
+        if !self.peers.read().unwrap().contains_key(&peer_service_name) {
             match utils::call_task(
                 &self.task_tx,
                 Message::new_connection(peer_service_name.clone(), await_connection),
@@ -177,7 +176,7 @@ impl Bus {
                     // This is an invalid
                     warn!(
                         "Failed to register service as `{}`: {}",
-                        self.service_name.read(),
+                        self.service_name.read().unwrap(),
                         err
                     );
                     return Err(Box::new(err.clone()));
@@ -192,7 +191,13 @@ impl Bus {
 
         // We either already had connection, or just created one, so we can
         // return existed connection handle
-        Ok(self.peers.read().get(&peer_service_name).cloned().unwrap())
+        Ok(self
+            .peers
+            .read()
+            .unwrap()
+            .get(&peer_service_name)
+            .cloned()
+            .unwrap())
     }
 
     pub fn register_method<P, R>(
@@ -252,7 +257,7 @@ impl Bus {
     ) -> Result<Receiver<MethodCall>, Box<dyn Error>> {
         // The function just creates a method handle, which performs type conversions
         // for incoming data and client replies. See [Method] for details
-        let mut methods = self.methods.write();
+        let mut methods = self.methods.write().unwrap();
 
         if methods.contains_key(method_name) {
             error!(
@@ -275,7 +280,7 @@ impl Bus {
     where
         T: Serialize + 'static,
     {
-        let mut signals = self.signals.write();
+        let mut signals = self.signals.write().unwrap();
 
         if signals.contains_key(signal_name) {
             error!(
@@ -302,7 +307,7 @@ impl Bus {
     where
         T: Serialize + 'static,
     {
-        let mut states = self.states.write();
+        let mut states = self.states.write().unwrap();
 
         if states.contains_key(state_name) {
             error!(
@@ -396,7 +401,7 @@ impl Bus {
             caller_name, method_name
         );
 
-        let method = self.methods.read().get(method_name).cloned();
+        let method = self.methods.read().unwrap().get(method_name).cloned();
 
         if let Some(method) = method {
             // Create oneshot channel to receive response
@@ -422,11 +427,11 @@ impl Bus {
             subscriber_name, signal_name
         );
 
-        let signal = self.signals.read().get(signal_name).cloned();
+        let signal = self.signals.read().unwrap().get(signal_name).cloned();
 
         if let Some(signal_sender) = signal {
             // Find subscriber
-            match self.peers.read().get(subscriber_name) {
+            match self.peers.read().unwrap().get(subscriber_name) {
                 Some(caller) => {
                     caller.start_signal_sending_task(signal_sender.subscribe(), seq);
                     Response::Ok.into_message(seq)
@@ -449,11 +454,11 @@ impl Bus {
             subscriber_name, state_name
         );
 
-        let state = self.states.read().get(state_name).cloned();
+        let state = self.states.read().unwrap().get(state_name).cloned();
 
         if let Some((state_change_sender, value_watch)) = state {
             // Find subscriber
-            match self.peers.read().get(subscriber_name) {
+            match self.peers.read().unwrap().get(subscriber_name) {
                 Some(caller) => {
                     let current_value = value_watch.borrow().clone();
 
@@ -470,7 +475,7 @@ impl Bus {
     fn remove_peer(&mut self, peer_name: String) {
         info!("Service client `{}` disconnected", peer_name);
 
-        self.peers.write().remove(&peer_name);
+        self.peers.write().unwrap().remove(&peer_name);
     }
 
     /// Handle incoming message from the bus
@@ -512,7 +517,7 @@ impl Bus {
         // Create new service connection handle. Can be used to handle own
         // connection requests by just returning already existing handle
         let new_service_connection = Peer::new(
-            self.service_name.read().clone(),
+            self.service_name.read().unwrap().clone(),
             peer_service_name.clone(),
             stream,
             self.task_tx.clone(),

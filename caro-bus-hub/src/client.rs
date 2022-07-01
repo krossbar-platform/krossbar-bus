@@ -1,9 +1,12 @@
-use std::{io::ErrorKind, os::unix::prelude::IntoRawFd, sync::Arc};
+use std::{
+    io::ErrorKind,
+    os::unix::prelude::IntoRawFd,
+    sync::{Arc, RwLock},
+};
 
 use bytes::BytesMut;
 use log::*;
 use nix::unistd::close as close_fd;
-use parking_lot::RwLock;
 use tokio::{
     io::AsyncWriteExt,
     net::{unix::UCred, UnixStream},
@@ -42,7 +45,7 @@ pub struct Client {
 impl Client {
     #[allow(dead_code)]
     pub fn service_name(&self) -> String {
-        self.service_name.read().clone()
+        self.service_name.read().unwrap().clone()
     }
 
     pub fn run(
@@ -228,7 +231,7 @@ impl Client {
     ) -> Option<Message> {
         trace!(
             "Incoming service `{}` message: {:?}",
-            self.service_name.read(),
+            self.service_name.read().unwrap(),
             message
         );
 
@@ -282,10 +285,10 @@ impl Client {
 
         // Service requested new service_name. We update our service name here.
         // In case we've failed to register service, we drop it anyway
-        *(self.service_name.write()) = service_name.clone();
+        *(self.service_name.write().unwrap()) = service_name.clone();
         trace!(
             "Assigned service name `{}` to a client with UUID {}",
-            self.service_name.read(),
+            self.service_name.read().unwrap(),
             self.uuid
         );
 
@@ -304,7 +307,7 @@ impl Client {
             _ => panic!("Should never happen"),
         };
 
-        let self_service_name = self.service_name.read().clone();
+        let self_service_name = self.service_name.read().unwrap().clone();
 
         if let Err(err) = self
             .permissions
@@ -325,7 +328,7 @@ impl Client {
 
     // Sends a message to the hub through a channel
     async fn send_message_to_hub(&self, message: Message) {
-        let service_name = self.service_name.read().clone();
+        let service_name = self.service_name.read().unwrap().clone();
 
         self.hub_tx
             .send(ClientRequest {
@@ -354,7 +357,7 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        let self_name = self.service_name.read().clone();
+        let self_name = self.service_name.read().unwrap().clone();
         if self.task_tx.is_closed() {
             return;
         }

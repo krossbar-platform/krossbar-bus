@@ -1,7 +1,10 @@
-use std::{error::Error, fmt::Debug, sync::Arc};
+use std::{
+    error::Error,
+    fmt::Debug,
+    sync::{Arc, RwLock},
+};
 
 use log::*;
-use parking_lot::RwLock;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     net::UnixStream,
@@ -119,7 +122,7 @@ impl Peer {
         params: &P,
     ) -> Result<R, Box<dyn Error + Sync + Send>> {
         let message = Message::new_call(
-            self.peer_service_name.read().clone(),
+            self.peer_service_name.read().unwrap().clone(),
             method_name.clone(),
             params,
         );
@@ -143,7 +146,7 @@ impl Peer {
                 MessageBody::Response(Response::Error(err)) => {
                     warn!(
                         "Failed to perform a call to `{}::{}`: {}",
-                        self.peer_service_name.read(),
+                        self.peer_service_name.read().unwrap(),
                         method_name,
                         err.to_string()
                     );
@@ -169,8 +172,10 @@ impl Peer {
         signal_name: &String,
         callback: impl Fn(&T) + Send + 'static,
     ) -> Result<(), Box<dyn Error + Sync + Send>> {
-        let message =
-            Message::new_subscription(self.service_name.read().clone(), signal_name.clone());
+        let message = Message::new_subscription(
+            self.service_name.read().unwrap().clone(),
+            signal_name.clone(),
+        );
 
         let (response, rx) = self.make_subscription_call(message, signal_name).await?;
 
@@ -198,7 +203,10 @@ impl Peer {
         state_name: &String,
         callback: impl Fn(&T) + Send + 'static,
     ) -> Result<T, Box<dyn Error + Sync + Send>> {
-        let message = Message::new_watch(self.service_name.read().clone(), state_name.clone());
+        let message = Message::new_watch(
+            self.service_name.read().unwrap().clone(),
+            state_name.clone(),
+        );
 
         let (response, rx) = self.make_subscription_call(message, state_name).await?;
 
@@ -248,7 +256,7 @@ impl Peer {
             MessageBody::Response(Response::Error(err)) => {
                 warn!(
                     "Failed to subscribe to `{}::{}`: {}",
-                    self.peer_service_name.read(),
+                    self.peer_service_name.read().unwrap(),
                     signal_name,
                     err.to_string()
                 );
@@ -373,7 +381,7 @@ impl Peer {
     }
 
     pub async fn close(&mut self) {
-        let self_name = self.peer_service_name.read().clone();
+        let self_name = self.peer_service_name.read().unwrap().clone();
         debug!(
             "Shutting down peer connection to `{:?}`",
             self.peer_service_name.read()
@@ -390,7 +398,7 @@ impl Drop for Peer {
     fn drop(&mut self) {
         trace!(
             "Peer `{}` connection dropped",
-            self.peer_service_name.read()
+            self.peer_service_name.read().unwrap()
         );
 
         let shutdown_tx = self.shutdown_tx.clone();
@@ -403,6 +411,10 @@ impl Drop for Peer {
 
 impl Debug for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Peer connection to {}", self.peer_service_name.read())
+        write!(
+            f,
+            "Peer connection to {}",
+            self.peer_service_name.read().unwrap()
+        )
     }
 }

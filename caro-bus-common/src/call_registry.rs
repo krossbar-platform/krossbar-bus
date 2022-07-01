@@ -3,12 +3,11 @@ use std::{
     io::Result as IoResult,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        {Arc, RwLock},
     },
 };
 
 use log::*;
-use parking_lot::RwLock;
 use tokio::io::AsyncWriteExt;
 use tokio::{net::UnixStream, sync::mpsc::Sender};
 
@@ -64,7 +63,7 @@ impl CallRegistry {
 
         socket.write_all(message.bytes().as_slice()).await?;
 
-        self.calls.write().insert(
+        self.calls.write().unwrap().insert(
             seq,
             Call {
                 persistent,
@@ -79,7 +78,7 @@ impl CallRegistry {
         // Keep subscriptions
         let seq = message.seq();
 
-        let maybe_sender = self.calls.read().get(&message.seq).cloned();
+        let maybe_sender = self.calls.read().unwrap().get(&message.seq).cloned();
 
         match maybe_sender {
             Some(call) => {
@@ -92,7 +91,7 @@ impl CallRegistry {
 
                 if !call.persistent {
                     trace!("Removing resolved call: {}", seq);
-                    self.calls.write().remove(&seq);
+                    self.calls.write().unwrap().remove(&seq);
                 }
             }
             _ => {
@@ -102,7 +101,7 @@ impl CallRegistry {
     }
 
     pub fn has_call(&self, seq: u64) -> bool {
-        self.calls.read().contains_key(&seq)
+        self.calls.read().unwrap().contains_key(&seq)
     }
 
     /// If we should keep sender after resolving. Used for subscriptions
