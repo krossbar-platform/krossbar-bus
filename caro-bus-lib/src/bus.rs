@@ -18,12 +18,14 @@ use tokio::{
         mpsc::{self, Receiver, Sender},
         oneshot::{self, Sender as OneSender},
         watch::{self, Receiver as WatchReceiver},
+        RwLock as TokioRwLock,
     },
 };
 
 use crate::{
     hub_connection::HubConnection,
     peer::Peer,
+    peer_connection::PeerConnection,
     signal::Signal,
     state::State,
     utils::{self, dummy_tx, TaskChannel},
@@ -32,6 +34,7 @@ use crate::{
 use caro_bus_common::{
     errors::Error as BusError,
     messages::{self, IntoMessage, Message, MessageBody, Response, ServiceMessage},
+    monitor::MONITOR_SERVICE_NAME,
 };
 
 type Shared<T> = Arc<RwLock<T>>;
@@ -45,7 +48,7 @@ pub struct Bus {
     /// Own service name
     service_name: Shared<String>,
     /// Connected services. All these connections are p2p
-    peers: Shared<HashMap<String, Peer>>,
+    peers: Arc<TokioRwLock<HashMap<String, Peer>>>,
     /// Registered methods. Sender is used to send parameters and
     /// receive a result from a callback
     methods: Shared<HashMap<String, Sender<MethodCall>>>,
@@ -59,6 +62,8 @@ pub struct Bus {
     task_tx: TaskChannel,
     /// Sender to shutdown bus connection
     shutdown_tx: Sender<()>,
+    /// Monitor connection if connected
+    monitor: Option<Arc<TokioRwLock<PeerConnection>>>,
 }
 
 impl Bus {
@@ -73,12 +78,13 @@ impl Bus {
 
         let mut this = Self {
             service_name: Arc::new(RwLock::new(service_name.clone())),
-            peers: Arc::new(RwLock::new(HashMap::new())),
+            peers: Arc::new(TokioRwLock::new(HashMap::new())),
             methods: Arc::new(RwLock::new(HashMap::new())),
             signals: Arc::new(RwLock::new(HashMap::new())),
             states: Arc::new(RwLock::new(HashMap::new())),
             task_tx: task_tx.clone(),
             shutdown_tx,
+            monitor: None,
         };
 
         let hub_connection = HubConnection::connect(service_name).await?;
@@ -154,7 +160,7 @@ impl Bus {
 
         // We may have already connected peer. So first we check if connected
         // and if not, perform connection request
-        if !self.peers.read().unwrap().contains_key(&peer_service_name) {
+        if !self.peers.read().await.contains_key(&peer_service_name) {
             match utils::call_task(
                 &self.task_tx,
                 Message::new_connection(peer_service_name.clone(), await_connection),
@@ -169,16 +175,12 @@ impl Bus {
                 // Handle second case next
                 MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
                     info!("Connection to `{}` succeded", peer_service_name);
-                    self.register_peer_fd(&peer_service_name, *fd, true);
+                    self.register_peer_fd(&peer_service_name, *fd, true).await;
                 }
                 // Hub doesn't allow connection
                 MessageBody::Response(Response::Error(err)) => {
                     // This is an invalid
-                    warn!(
-                        "Failed to register service as `{}`: {}",
-                        self.service_name.read().unwrap(),
-                        err
-                    );
+                    warn!("Failed to connect to `{}`: {}", &peer_service_name, err);
                     return Err(Box::new(err.clone()));
                 }
                 // Invalid protocol here
@@ -194,7 +196,7 @@ impl Bus {
         Ok(self
             .peers
             .read()
-            .unwrap()
+            .await
             .get(&peer_service_name)
             .cloned()
             .unwrap())
@@ -380,7 +382,7 @@ impl Bus {
                     "Service connection received shutdown request from {}",
                     peer_name
                 );
-                self.remove_peer(peer_name.clone());
+                self.remove_peer(peer_name.clone()).await;
             }
             m => {
                 error!("Invalid client message: {:?}", m)
@@ -431,7 +433,7 @@ impl Bus {
 
         if let Some(signal_sender) = signal {
             // Find subscriber
-            match self.peers.read().unwrap().get(subscriber_name) {
+            match self.peers.read().await.get(subscriber_name) {
                 Some(caller) => {
                     caller.start_signal_sending_task(signal_sender.subscribe(), seq);
                     Response::Ok.into_message(seq)
@@ -458,7 +460,7 @@ impl Bus {
 
         if let Some((state_change_sender, value_watch)) = state {
             // Find subscriber
-            match self.peers.read().unwrap().get(subscriber_name) {
+            match self.peers.read().await.get(subscriber_name) {
                 Some(caller) => {
                     let current_value = value_watch.borrow().clone();
 
@@ -472,10 +474,10 @@ impl Bus {
         }
     }
 
-    fn remove_peer(&mut self, peer_name: String) {
+    async fn remove_peer(&mut self, peer_name: String) {
         info!("Service client `{}` disconnected", peer_name);
 
-        self.peers.write().unwrap().remove(&peer_name);
+        self.peers.write().await.remove(&peer_name);
     }
 
     /// Handle incoming message from the bus
@@ -499,7 +501,13 @@ impl Bus {
                     }
                 };
 
-                self.register_peer_fd(peer_service_name, fd, false);
+                // Monitor connection has its own flow
+                if peer_service_name == MONITOR_SERVICE_NAME {
+                    self.register_monitor(fd, hub_connection).await;
+                    return None;
+                }
+
+                self.register_peer_fd(peer_service_name, fd, false).await;
             }
             // If got a response to a call, handle it by call_registry. Otherwise it's
             // an incoming call. Use [handle_bus_message]
@@ -510,19 +518,23 @@ impl Bus {
     }
 
     /// Well, receive client socket descriptor and create an entry in clients map
-    fn register_peer_fd(&self, peer_service_name: &String, fd: RawFd, outgoing: bool) {
+    async fn register_peer_fd(&self, peer_service_name: &String, fd: RawFd, outgoing: bool) {
         let os_stream = unsafe { OsStream::from_raw_fd(fd) };
         let stream = UnixStream::from_std(os_stream).unwrap();
 
         // Create new service connection handle. Can be used to handle own
         // connection requests by just returning already existing handle
-        let new_service_connection = Peer::new(
+        let mut new_service_connection = Peer::new(
             self.service_name.read().unwrap().clone(),
             peer_service_name.clone(),
             stream,
             self.task_tx.clone(),
             outgoing,
         );
+
+        if let Some(ref monitor) = self.monitor {
+            new_service_connection.set_monitor(monitor.clone()).await;
+        }
 
         // Place the handle into the map of existing connections.
         // Caller will use the map to return the handle to the client.
@@ -533,10 +545,30 @@ impl Bus {
             .insert(peer_service_name.clone(), new_service_connection);
     }
 
+    async fn register_monitor(&mut self, fd: RawFd, hub_connection: &mut HubConnection) {
+        let os_stream = unsafe { OsStream::from_raw_fd(fd) };
+        let stream = UnixStream::from_std(os_stream).unwrap();
+
+        let monitor_handle = Arc::new(TokioRwLock::new(PeerConnection::new(
+            "monitor".into(),
+            stream,
+            self.task_tx.clone(),
+            self.service_name.read().unwrap().clone(),
+            false,
+        )));
+
+        self.monitor = Some(monitor_handle.clone());
+        hub_connection.set_monitor(monitor_handle.clone());
+
+        for peer in self.peers.write().await.values_mut() {
+            peer.set_monitor(monitor_handle.clone()).await;
+        }
+    }
+
     pub async fn close(&mut self) {
         debug!(
-            "Shutting down service connection for `{:?}`",
-            self.service_name.read()
+            "Shutting down service connection for `{}`",
+            self.service_name.read().unwrap()
         );
 
         let _ = self.shutdown_tx.send(()).await;

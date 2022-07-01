@@ -1,16 +1,23 @@
 use std::os::unix::{net::UnixStream as OsStream, prelude::FromRawFd};
+use std::sync::Arc;
 use std::time::Duration;
 
+use async_recursion::async_recursion;
 use bytes::BytesMut;
+use caro_bus_common::monitor::{MonitorMessage, MonitorMessageDirection, MONITOR_METHOD};
 use caro_bus_common::{
     call_registry::CallRegistry,
     messages::{IntoMessage, Message, MessageBody, Response, ServiceMessage},
     net,
 };
 use log::*;
-use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc::Sender};
+use tokio::{
+    io::AsyncWriteExt,
+    net::UnixStream,
+    sync::{mpsc::Sender, RwLock as TokioRwLock},
+};
 
-use crate::utils::{self, TaskChannel};
+use crate::utils::{self, dummy_tx, TaskChannel};
 
 #[derive(Eq, PartialEq)]
 enum State {
@@ -20,6 +27,7 @@ enum State {
 }
 
 pub struct PeerConnection {
+    /// Peer name
     name: String,
     // Peer socket
     socket: UnixStream,
@@ -36,10 +44,20 @@ pub struct PeerConnection {
     state: State,
     /// Active subscriptions. Used after reconnection to resubscribe
     subscriptions: Vec<(Message, Sender<Message>)>,
+    /// Own service name
+    service_name: String,
+    /// Monitor connection if connected
+    monitor: Option<Arc<TokioRwLock<PeerConnection>>>,
 }
 
 impl PeerConnection {
-    pub fn new(name: String, socket: UnixStream, hub_tx: TaskChannel, outgoing: bool) -> Self {
+    pub fn new(
+        name: String,
+        socket: UnixStream,
+        hub_tx: TaskChannel,
+        service_name: String,
+        outgoing: bool,
+    ) -> Self {
         Self {
             name,
             socket,
@@ -49,6 +67,8 @@ impl PeerConnection {
             outgoing,
             state: State::Open,
             subscriptions: Vec::new(),
+            service_name,
+            monitor: None,
         }
     }
 
@@ -60,6 +80,9 @@ impl PeerConnection {
         loop {
             match net::read_message_from_socket(&mut self.socket, &mut self.read_buffer).await {
                 Ok(message) => {
+                    self.send_monitor_message(&message, MonitorMessageDirection::Incoming)
+                        .await;
+
                     match message.body() {
                         // If got a response to a call, handle it by call_registry. Otherwise it's
                         // an incoming call. Use [handle_bus_message]
@@ -87,6 +110,7 @@ impl PeerConnection {
         }
     }
 
+    #[async_recursion]
     pub async fn write_message(
         &mut self,
         message: Message,
@@ -150,6 +174,10 @@ impl PeerConnection {
         }
 
         let _ = callback.send(Response::Ok.into_message(0)).await;
+
+        self.send_monitor_message(&message, MonitorMessageDirection::Outgoing)
+            .await;
+
         Some(())
     }
 
@@ -179,10 +207,48 @@ impl PeerConnection {
             }
         }
 
+        self.send_monitor_message(&message, MonitorMessageDirection::Outgoing)
+            .await;
+
         Some(())
     }
 
-    // TODO: Handle non-existing services
+    async fn send_monitor_message(
+        &mut self,
+        message: &Message,
+        direction: MonitorMessageDirection,
+    ) {
+        let (sender, receiver) = match direction {
+            MonitorMessageDirection::Outgoing => (self.service_name.clone(), self.name.clone()),
+            MonitorMessageDirection::Incoming => (self.name.clone(), self.service_name.clone()),
+        };
+
+        if let Some(ref monitor) = self.monitor {
+            // First we make monitor message, which will be sent as method call parameter...
+            let monitor_message = MonitorMessage::new(sender, receiver, &message, direction);
+
+            // ..And to call monitor method, we need
+            let method_call = Message::new_call(
+                self.service_name.clone(),
+                MONITOR_METHOD.into(),
+                &monitor_message,
+            );
+
+            trace!("Sending monitor message: {:?}", message);
+
+            if monitor
+                .write()
+                .await
+                .write_message(method_call, dummy_tx())
+                .await
+                .is_none()
+            {
+                debug!("Monitor disconnected");
+                self.monitor = None;
+            }
+        }
+    }
+
     async fn reconnect(&mut self) {
         info!("Incoming request to reconnect to `{}`", self.name);
 
@@ -247,6 +313,12 @@ impl PeerConnection {
 
         info!("Succesfully resubscribed to `{}`", self.name);
         true
+    }
+
+    pub fn set_monitor(&mut self, monitor_connection: Arc<TokioRwLock<PeerConnection>>) {
+        debug!("Incoming monitor connection for the peer `{}`", self.name);
+
+        self.monitor = Some(monitor_connection);
     }
 }
 

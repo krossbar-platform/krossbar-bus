@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::time::Duration;
 use std::{error::Error, io::Result as IoResult, os::unix::prelude::RawFd};
 
 use async_recursion::async_recursion;
 use bytes::BytesMut;
+use caro_bus_common::monitor::{MonitorMessage, MonitorMessageDirection, MONITOR_METHOD};
 use caro_bus_common::HUB_SOCKET_PATH;
 use caro_bus_common::{
     call_registry::CallRegistry,
@@ -11,9 +13,14 @@ use caro_bus_common::{
     net,
 };
 use log::*;
-use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc::Sender};
+use tokio::{
+    io::AsyncWriteExt,
+    net::UnixStream,
+    sync::{mpsc::Sender, RwLock as TokioRwLock},
+};
 use tokio_send_fd::SendFd;
 
+use crate::peer_connection::PeerConnection;
 use crate::utils::dummy_tx;
 
 const RECONNECT_RETRY_PERIOD: Duration = Duration::from_secs(1);
@@ -36,6 +43,8 @@ pub struct HubConnection {
     call_registry: CallRegistry,
     /// Peer state
     state: State,
+    /// Monitor connection if connected
+    monitor: Option<Arc<TokioRwLock<PeerConnection>>>,
 }
 
 impl HubConnection {
@@ -46,6 +55,7 @@ impl HubConnection {
             read_buffer: BytesMut::with_capacity(64),
             call_registry: CallRegistry::new(),
             state: State::Open,
+            monitor: None,
         }
     }
 
@@ -132,6 +142,9 @@ impl HubConnection {
         loop {
             match net::read_message_from_socket(&mut self.socket, &mut self.read_buffer).await {
                 Ok(message) => {
+                    self.send_monitor_message(&message, MonitorMessageDirection::Incoming)
+                        .await;
+
                     match message.body() {
                         // Incoming connection request. Connection socket FD will be coming next
                         MessageBody::ServiceMessage(ServiceMessage::IncomingPeerFd {
@@ -228,6 +241,9 @@ impl HubConnection {
         }
 
         let _ = callback.send(Response::Ok.into_message(0)).await;
+
+        self.send_monitor_message(&message, MonitorMessageDirection::Outgoing)
+            .await;
     }
 
     async fn call_reconnect(&mut self, mut message: Message, callback: Sender<Message>) {
@@ -244,5 +260,50 @@ impl HubConnection {
             self.state = State::Reconnecting;
             self.reconnect().await;
         }
+
+        self.send_monitor_message(&message, MonitorMessageDirection::Outgoing)
+            .await;
+    }
+
+    async fn send_monitor_message(
+        &mut self,
+        message: &Message,
+        direction: MonitorMessageDirection,
+    ) {
+        let (sender, receiver) = match direction {
+            MonitorMessageDirection::Outgoing => (self.service_name.clone(), "hub".into()),
+            MonitorMessageDirection::Incoming => ("hub".into(), self.service_name.clone()),
+        };
+
+        if let Some(ref monitor) = self.monitor {
+            // First we make monitor message, which will be sent as method call parameter...
+            let monitor_message = MonitorMessage::new(sender, receiver, &message, direction);
+
+            // ..And to call monitor method, we need
+            let method_call = Message::new_call(
+                self.service_name.clone(),
+                MONITOR_METHOD.into(),
+                &monitor_message,
+            );
+
+            trace!("Sending monitor message: {:?}", message);
+
+            if monitor
+                .write()
+                .await
+                .write_message(method_call, dummy_tx())
+                .await
+                .is_none()
+            {
+                debug!("Monitor disconnected");
+                self.monitor = None;
+            }
+        }
+    }
+
+    pub fn set_monitor(&mut self, monitor_connection: Arc<TokioRwLock<PeerConnection>>) {
+        debug!("Incoming monitor connection for the hub");
+
+        self.monitor = Some(monitor_connection);
     }
 }

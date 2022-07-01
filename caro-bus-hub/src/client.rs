@@ -277,7 +277,7 @@ impl Client {
             .check_service_name_allowed(user_credentials, &service_name)
         {
             warn!(
-                "Client is not allowed to register with name `{:?}`: {}",
+                "Client is not allowed to register with name `{}`: {}",
                 service_name, err
             );
             return Some(err.into_message(request.seq()));

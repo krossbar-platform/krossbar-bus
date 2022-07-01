@@ -11,6 +11,7 @@ use tokio::{
     sync::{
         broadcast::Receiver as BroadcastReceiver,
         mpsc::{self, Receiver, Sender},
+        RwLock as TokioRwLock,
     },
 };
 
@@ -25,6 +26,20 @@ use caro_bus_common::{
 
 type Shared<T> = Arc<RwLock<T>>;
 
+enum TaskMessage {
+    Message(Message),
+    Monitor(Arc<TokioRwLock<PeerConnection>>),
+}
+
+impl Debug for TaskMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskMessage::Message(message) => write!(f, "Message({:?})", message),
+            TaskMessage::Monitor(_) => write!(f, "Monitor()"),
+        }
+    }
+}
+
 /// P2p service connection handle
 #[derive(Clone)]
 pub struct Peer {
@@ -35,7 +50,7 @@ pub struct Peer {
     /// Sender to forward calls to the service
     service_tx: TaskChannel,
     /// Sender to make calls into the task
-    task_tx: TaskChannel,
+    task_tx: Sender<(TaskMessage, Sender<Message>)>,
     /// Sender to shutdown peer connection
     shutdown_tx: Sender<()>,
 }
@@ -59,7 +74,7 @@ impl Peer {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
         let mut this = Self {
-            service_name: Arc::new(RwLock::new(service_name)),
+            service_name: Arc::new(RwLock::new(service_name.clone())),
             peer_service_name: Arc::new(RwLock::new(peer_service_name.clone())),
             service_tx: service_tx.clone(),
             task_tx,
@@ -68,8 +83,13 @@ impl Peer {
         let result = this.clone();
 
         tokio::spawn(async move {
-            let mut peer_handle =
-                PeerConnection::new(peer_service_name, stream, service_tx, outgoing);
+            let mut peer_handle = PeerConnection::new(
+                peer_service_name,
+                stream,
+                service_tx,
+                service_name.clone(),
+                outgoing,
+            );
 
             loop {
                 tokio::select! {
@@ -94,12 +114,18 @@ impl Peer {
                     },
                     // Handle method calls
                     Some((request, callback_tx)) = task_rx.recv() => {
-                        trace!("Peer task message: {:?}", request);
+                        match request {
+                            TaskMessage::Message(message) => {
+                                trace!("Peer task message: {:?}", message);
 
-                        if peer_handle.write_message(request, callback_tx).await.is_none() {
-                            warn!("Peer connection closed. Shutting down");
-                            this.close().await
+                                if peer_handle.write_message(message, callback_tx).await.is_none() {
+                                    warn!("Peer connection closed. Shutting down");
+                                    this.close().await
+                                }
+                            },
+                            TaskMessage::Monitor(monitor) => peer_handle.set_monitor(monitor),
                         }
+
                     },
                     Some(_) = shutdown_rx.recv() => {
                         let shutdown_message = Response::Shutdown("Shutdown".into()).into_message(0);
@@ -128,7 +154,7 @@ impl Peer {
         );
 
         // Send method call request
-        let response = utils::call_task(&self.task_tx, message).await;
+        let response = utils::call_task(&self.task_tx, TaskMessage::Message(message)).await;
 
         match response {
             Ok(message) => match message.body() {
@@ -247,7 +273,9 @@ impl Peer {
         let (tx, mut rx) = mpsc::channel(10);
 
         // Send subscription request
-        self.task_tx.send((message, tx)).await?;
+        self.task_tx
+            .send((TaskMessage::Message(message), tx))
+            .await?;
 
         let response = rx.recv().await.unwrap();
 
@@ -347,7 +375,9 @@ impl Peer {
                         message.update_seq(seq);
 
                         // Call self task to send signal message
-                        if let Err(_) = utils::call_task(&self_tx, message).await {
+                        if let Err(_) =
+                            utils::call_task(&self_tx, TaskMessage::Message(message)).await
+                        {
                             warn!("Failed to send signal to a subscriber. Probably closed. Removing subscriber");
                             return;
                         }
@@ -380,11 +410,18 @@ impl Peer {
         }
     }
 
+    pub async fn set_monitor(&mut self, monitor_connection: Arc<TokioRwLock<PeerConnection>>) {
+        let _ = self
+            .task_tx
+            .send((TaskMessage::Monitor(monitor_connection), dummy_tx()))
+            .await;
+    }
+
     pub async fn close(&mut self) {
         let self_name = self.peer_service_name.read().unwrap().clone();
         debug!(
-            "Shutting down peer connection to `{:?}`",
-            self.peer_service_name.read()
+            "Shutting down peer connection to `{}`",
+            self.peer_service_name.read().unwrap()
         );
 
         let _ = utils::call_task(

@@ -9,7 +9,9 @@ use json::JsonValue;
 use log::*;
 use tokio::net::unix::UCred;
 
-use caro_bus_common::{errors::Error as BusError, service_names::NamePattern};
+use caro_bus_common::{
+    errors::Error as BusError, monitor::MONITOR_SERVICE_NAME, service_names::NamePattern,
+};
 
 const ALLOWED_EXECS_KEY: &str = "exec";
 const INCOMING_CONNS_KEY: &str = "incoming_connections";
@@ -68,7 +70,7 @@ impl Permissions {
         trace!("Peer binary: {}", service_exec);
 
         debug!(
-            "Checking if binary `{:?}` allowed to register service {}",
+            "Checking if binary `{}` allowed to register service {}",
             service_exec, service_name
         );
 
@@ -138,6 +140,11 @@ impl Permissions {
             client_service,
             target_service
         );
+
+        if self.is_previleged_service(client_service) {
+            debug!("Connection from a previleged service `{}`", client_service);
+            return Ok(());
+        }
 
         for pattern in self.read_allowed_connections(target_service)? {
             trace!("Matching {:?} over {:?}", client_service, pattern);
@@ -230,7 +237,7 @@ impl Permissions {
                     "Failed to open service file at: {}",
                     service_file_name.as_os_str().to_str().unwrap()
                 );
-                return Err(BusError::NotAllowed);
+                return Err(BusError::ServiceNotFound);
             }
         };
 
@@ -255,5 +262,10 @@ impl Permissions {
             }
             Ok(value) => Ok(value),
         }
+    }
+
+    /// Returns if service allows to connect to any counterparty
+    fn is_previleged_service(&self, service_name: &String) -> bool {
+        service_name == MONITOR_SERVICE_NAME
     }
 }

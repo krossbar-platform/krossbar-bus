@@ -1,4 +1,4 @@
-use std::os::unix::prelude::RawFd;
+use std::{fmt::Display, os::unix::prelude::RawFd};
 
 use bson::{self, Bson};
 use bytes::{Buf, BytesMut};
@@ -42,6 +42,32 @@ pub enum MessageBody {
 impl IntoMessage for MessageBody {
     fn into_message(self, seq: u64) -> Message {
         Message { seq, body: self }
+    }
+}
+
+impl Display for MessageBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ServiceMessage(service_message) => write!(f, "{}", service_message),
+            Self::Response(response) => write!(f, "{}", response),
+            Self::MethodCall {
+                caller_name: _,
+                method_name,
+                params,
+            } => write!(
+                f,
+                "Method '{}' call. Argument value: {}",
+                method_name, params
+            ),
+            Self::SignalSubscription {
+                subscriber_name: _,
+                signal_name,
+            } => write!(f, "Signal '{}' subscription request", signal_name),
+            Self::StateSubscription {
+                subscriber_name: _,
+                state_name,
+            } => write!(f, "State '{}' watch request", state_name),
+        }
     }
 }
 
@@ -148,6 +174,33 @@ impl IntoMessage for ServiceMessage {
     }
 }
 
+impl Display for ServiceMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Register {
+                protocol_version,
+                service_name,
+            } => write!(
+                f,
+                "Registration request. Protocol version {}. Requested service name: '{}'",
+                protocol_version, service_name
+            ),
+            Self::Connect {
+                peer_service_name,
+                await_connection,
+            } => write!(
+                f,
+                "Connection request to '{}'. Will await?: {}",
+                peer_service_name, await_connection
+            ),
+            Self::IncomingPeerFd { peer_service_name } => {
+                write!(f, "Incoming FD for a peer '{}'", peer_service_name)
+            }
+            Self::PeerFd(_) => panic!("Should never be accessible outside of the lib"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Response {
     Ok,
@@ -163,6 +216,19 @@ impl IntoMessage for Response {
         Message {
             seq,
             body: MessageBody::Response(self),
+        }
+    }
+}
+
+impl Display for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ok => write!(f, "Ok"),
+            Self::Shutdown(reason) => write!(f, "Shutdown message. Reason: {}", reason),
+            Self::Return(bson) => write!(f, "Method response: {}", bson),
+            Self::Signal(bson) => write!(f, "Signal emitted: {}", bson),
+            Self::StateChanged(bson) => write!(f, "State changed: {}", bson),
+            Self::Error(err) => write!(f, "Error: {}", err),
         }
     }
 }

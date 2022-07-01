@@ -1,4 +1,4 @@
-use std::{error::Error, io::ErrorKind};
+use std::{error::Error, fmt::Debug, io::ErrorKind};
 
 use log::*;
 use tokio::sync::mpsc::{self, Sender};
@@ -10,10 +10,13 @@ pub(crate) type TaskCall = (Message, Sender<TaskResponse>);
 pub(crate) type TaskChannel = Sender<TaskCall>;
 
 /// Send message request into mpsc channel and wait for the result
-pub async fn call_task(
-    task_tx: &Sender<(Message, Sender<Message>)>,
-    message: Message,
-) -> Result<Message, Box<dyn Error + Send + Sync>> {
+pub async fn call_task<T>(
+    task_tx: &Sender<(T, Sender<Message>)>,
+    message: T,
+) -> Result<Message, Box<dyn Error + Send + Sync>>
+where
+    T: Debug + Sync + Send + 'static,
+{
     let (tx, mut rx) = mpsc::channel(10);
 
     task_tx.send((message, tx)).await?;
