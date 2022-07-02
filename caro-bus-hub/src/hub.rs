@@ -122,7 +122,7 @@ impl Hub {
             }
             message => {
                 error!(
-                    "Ivalid message from a client `{:?}`: {:?}",
+                    "Ivalid message from a client `{}`: {:?}",
                     request.service_name, message
                 );
             }
@@ -239,7 +239,7 @@ impl Hub {
 
             if requester_service_name == *target_service_name {
                 warn!(
-                    "Service `{:?}` tries to connect to himself",
+                    "Service `{}` tries to connect to himself",
                     target_service_name,
                 );
 
@@ -257,7 +257,7 @@ impl Hub {
                 // Peer doesn't want to wait for connection
                 if !await_connection {
                     warn!(
-                        "Failed to find a service `{:?}` to connect with `{:?}`",
+                        "Failed to find a service `{}` to connect with `{}`",
                         target_service_name, requester_service_name
                     );
 

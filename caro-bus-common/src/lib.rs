@@ -1,4 +1,5 @@
 pub mod call_registry;
+pub mod connect;
 pub mod errors;
 pub mod messages;
 pub mod monitor;

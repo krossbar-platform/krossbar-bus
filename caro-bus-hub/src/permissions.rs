@@ -10,7 +10,8 @@ use log::*;
 use tokio::net::unix::UCred;
 
 use caro_bus_common::{
-    errors::Error as BusError, monitor::MONITOR_SERVICE_NAME, service_names::NamePattern,
+    connect::CONNECT_SERVICE_NAME, errors::Error as BusError, monitor::MONITOR_SERVICE_NAME,
+    service_names::NamePattern,
 };
 
 const ALLOWED_EXECS_KEY: &str = "exec";
@@ -266,6 +267,6 @@ impl Permissions {
 
     /// Returns if service allows to connect to any counterparty
     fn is_previleged_service(&self, service_name: &String) -> bool {
-        service_name == MONITOR_SERVICE_NAME
+        service_name == MONITOR_SERVICE_NAME || service_name == CONNECT_SERVICE_NAME
     }
 }

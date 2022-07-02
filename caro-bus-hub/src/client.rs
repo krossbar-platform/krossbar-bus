@@ -197,7 +197,7 @@ impl Client {
 
                 if let Err(err) = socket.send_fd(fd).await {
                     error!(
-                        "Failed to send fd to the service `{:?}`: {}",
+                        "Failed to send fd to the service `{}`: {}",
                         self.service_name(),
                         err.to_string()
                     );
@@ -314,7 +314,7 @@ impl Client {
             .check_connection_allowed(&self_service_name, &peer_service_name)
         {
             warn!(
-                "Client `{:?}` is not allowed to connect with `{:?}`: {}",
+                "Client `{}` is not allowed to connect with `{}`: {}",
                 self_service_name, peer_service_name, err
             );
             return Some(err.into_message(request.seq()));
@@ -363,8 +363,8 @@ impl Drop for Client {
         }
 
         debug!(
-            "Shutting down service connection for `{:?}`",
-            self.service_name.read()
+            "Shutting down service connection for `{}`",
+            self.service_name.read().unwrap()
         );
 
         let tx = self.task_tx.clone();

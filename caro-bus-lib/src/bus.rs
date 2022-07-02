@@ -235,7 +235,9 @@ impl Bus {
                                 );
 
                                 calback_tx
-                                    .send(Response::Error(BusError::InvalidParameters))
+                                    .send(Response::Error(BusError::InvalidParameters(
+                                        err.to_string(),
+                                    )))
                                     .unwrap();
                             }
                         }

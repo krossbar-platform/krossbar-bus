@@ -18,8 +18,8 @@ pub enum Error {
     NotRegistered,
     #[error("Invalid protocol version. Please update Caro dependencies")]
     InvalidProtocol,
-    #[error("Invalid parameters passed into a function")]
-    InvalidParameters,
+    #[error("Invalid parameters passed into a function {0}")]
+    InvalidParameters(String),
     #[error("Invalid return type from a function. Can't deserialize response")]
     InvalidResponse,
     #[error("Invalid message received. Internal error. Please fill bug report")]
