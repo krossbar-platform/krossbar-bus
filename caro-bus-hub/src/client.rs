@@ -26,28 +26,38 @@ use caro_bus_common::{
 
 type Shared<T> = Arc<RwLock<T>>;
 
+/// Hub response to sent to a client
 #[derive(Debug)]
 enum HubReponse {
+    /// Incoming file descriptor for a new peer
     Fd(Message, UnixStream),
+    /// Regular message from the hub
     Message(Message),
+    /// Hub wants to shut down the connection to the peer
     Shutdown(Message),
 }
 
+/// Client handle
 #[derive(Clone)]
 pub struct Client {
+    /// Unique id. Used to identify the client while he's registered
     uuid: Uuid,
+    /// Client service name after registration
     service_name: Shared<String>,
+    /// Sender, which being pulled in the task
     task_tx: Sender<HubReponse>,
+    /// Sender for clients to send requests to the hub
     hub_tx: Sender<ClientRequest>,
+    /// Permissoins handle
     permissions: Arc<Permissions>,
 }
 
 impl Client {
-    #[allow(dead_code)]
     pub fn service_name(&self) -> String {
         self.service_name.read().unwrap().clone()
     }
 
+    /// Start listening for incoming messages
     pub fn run(
         uuid: Uuid,
         hub_tx: Sender<ClientRequest>,
@@ -115,7 +125,7 @@ impl Client {
         client_handle
     }
 
-    // Request to send message to a client
+    /// Request to send message to a client
     pub async fn send_message(&mut self, service_name: &String, message: Message) {
         debug!(
             "Incoming response message for a service `{}`: {:?}",
@@ -131,7 +141,7 @@ impl Client {
         }
     }
 
-    // Request to send connection fd to a client
+    /// Request to send connection fd to a client
     pub async fn send_connection_fd(
         &mut self,
         message: Message,
@@ -153,7 +163,7 @@ impl Client {
         }
     }
 
-    // Write response message into a client socket
+    /// Write response message into a client socket
     async fn write_response_message(
         &mut self,
         socket: &mut UnixStream,
@@ -223,7 +233,7 @@ impl Client {
         Ok(())
     }
 
-    // Handle incoming client message
+    /// Handle incoming client message
     async fn handle_client_request(
         &mut self,
         user_credentials: UCred,
@@ -253,7 +263,7 @@ impl Client {
         }
     }
 
-    // Handle incoming client registration request
+    /// Handle incoming client registration request
     async fn handle_registration_message(
         &mut self,
         user_credentials: UCred,
@@ -297,7 +307,7 @@ impl Client {
         None
     }
 
-    // handle incoming client connection request
+    /// Handle incoming client connection request
     async fn handle_connect_message(&mut self, request: Message) -> Option<Message> {
         let (peer_service_name, _) = match request.body() {
             MessageBody::ServiceMessage(ServiceMessage::Connect {

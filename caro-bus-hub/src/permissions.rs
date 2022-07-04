@@ -43,6 +43,7 @@ impl Permissions {
         }
     }
 
+    /// Check if a process alowed to register with a given **service_name**
     pub fn check_service_name_allowed(
         &self,
         user_credentials: UCred,
@@ -91,6 +92,7 @@ impl Permissions {
         }
     }
 
+    /// Check if service file for a given service exists
     pub fn service_file_exists(&self, service_name: &String) -> bool {
         let service_file_name = self
             .service_files_dir
@@ -99,6 +101,7 @@ impl Permissions {
         service_file_name.as_path().exists()
     }
 
+    /// Read allowed executables for a given service from a service file
     fn read_allowed_execs(&self, service_name: &String) -> Result<Pattern, BusError> {
         let json = self.parse_service_file_json(service_name)?;
 
@@ -131,6 +134,7 @@ impl Permissions {
         }
     }
 
+    /// Check if a **client_service** is allowed to connect to a **target_service**
     pub fn check_connection_allowed(
         &self,
         client_service: &String,
@@ -174,6 +178,7 @@ impl Permissions {
         Err(BusError::NotAllowed)
     }
 
+    /// Read allowed incoming connections for a given service from a service file
     fn read_allowed_connections(
         &self,
         service_name: &String,

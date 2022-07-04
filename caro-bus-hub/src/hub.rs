@@ -19,20 +19,31 @@ struct PendingConnectionRequest {
     request: Message,
 }
 
+/// Incoming client request
 #[derive(Debug)]
 pub struct ClientRequest {
+    /// Client unique id
     pub uuid: Uuid,
+    /// Client service name. Can be empty if not registered yet
     pub service_name: String,
+    /// Request message
     pub message: Message,
 }
 
 pub struct Hub {
+    /// Sender to recieve requests from th eclients
     client_tx: Sender<ClientRequest>,
+    /// Receiver to recieve requests from th eclients
     hub_rx: Receiver<ClientRequest>,
+    /// Receiver to listen for shutdown requests
     shutdown_rx: Receiver<()>,
+    /// A map of anonymous clients. Once a client is registered, it's moved into [Hub::clients]
     anonymous_clients: HashMap<Uuid, Client>,
+    /// A map of laready registered clients
     clients: HashMap<String, Client>,
+    /// Permissions handle
     permissions: Arc<Permissions>,
+    /// If a client uses 'Bus::connect_await' from Caro lib, it's waiting for a peer connection in this map
     pending_connections: HashMap<String, Vec<PendingConnectionRequest>>,
 }
 
@@ -51,6 +62,7 @@ impl Hub {
         }
     }
 
+    /// Start listening for incoming connections
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         match UnixListener::bind(HUB_SOCKET_PATH) {
             Ok(listener) => {
@@ -92,8 +104,9 @@ impl Hub {
         self.clients.get_mut(service_name).unwrap()
     }
 
+    /// Handle new connection
     async fn handle_new_client(&mut self, socket: UnixStream) {
-        // Temporal name until client sends registration message
+        // Temporal ID until client sends registration message
         let uuid = Uuid::new_v4();
 
         let client = Client::run(
@@ -106,6 +119,7 @@ impl Hub {
         self.anonymous_clients.insert(uuid.clone(), client);
     }
 
+    /// Handle a message from a client
     async fn handle_client_call(&mut self, request: ClientRequest) {
         match request.message.body() {
             MessageBody::ServiceMessage(ServiceMessage::Register { .. }) => {
@@ -117,7 +131,7 @@ impl Hub {
                     .await
             }
             MessageBody::Response(Response::Shutdown(_)) => {
-                self.handle_disconnection(&request.uuid, &request.service_name)
+                self.handle_client_disconnection(&request.uuid, &request.service_name)
                     .await;
             }
             message => {
@@ -129,6 +143,7 @@ impl Hub {
         }
     }
 
+    /// Hadnle registration message from a client
     async fn handle_client_registration(&mut self, uuid: Uuid, request: Message) {
         let (_, service_name) = match request.body() {
             MessageBody::ServiceMessage(ServiceMessage::Register {
@@ -199,6 +214,7 @@ impl Hub {
         }
     }
 
+    /// Handle peer connection message from a client
     async fn handle_new_connection_request(
         &mut self,
         requester_service_name: String,
@@ -314,7 +330,8 @@ impl Hub {
         )
     }
 
-    async fn handle_disconnection(&mut self, uuid: &Uuid, service_name: &String) {
+    /// Handle client disconnections
+    async fn handle_client_disconnection(&mut self, uuid: &Uuid, service_name: &String) {
         self.anonymous_clients.remove(uuid);
         self.clients.remove(service_name);
 
