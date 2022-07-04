@@ -14,12 +14,14 @@ pub trait IntoMessage {
     fn into_message(self, seq: u64) -> Message;
 }
 
+/// Message sent over a wire
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
     pub(crate) seq: u64,
     pub(crate) body: MessageBody,
 }
 
+/// Message body, which constains sent data
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum MessageBody {
     ServiceMessage(ServiceMessage),
@@ -140,11 +142,14 @@ impl Message {
     }
 }
 
+/// Reading function can use this enum to notify if it read an entire message,
+/// or need more data to read in order to deserialize incoming message
 pub enum EitherMessage {
     FullMessage(Message),
     NeedMoreData(usize),
 }
 
+/// Internal service message
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceMessage {
     /// Client sends message to Hub to resister with *service_name*
@@ -201,6 +206,7 @@ impl Display for ServiceMessage {
     }
 }
 
+/// Call reponse. Including state changes and signal emissions
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Response {
     Ok,

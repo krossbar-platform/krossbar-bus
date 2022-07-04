@@ -6,12 +6,14 @@ use crate::messages::Message;
 pub const MONITOR_SERVICE_NAME: &str = "com.bus.monitor";
 pub const MONITOR_METHOD: &str = "message";
 
+/// Monitor message directions. Used for more convenient formatting
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MonitorMessageDirection {
     Incoming,
     Outgoing,
 }
 
+/// Monitor receiving method argument type
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MonitorMessage {
     pub sender: String,
