@@ -25,7 +25,7 @@ struct Call {
 
 /// Struct to account user calls and send incoming response
 /// to a proper caller.
-/// Registry keep subscription across [resolve] calls, but deletes
+/// Registry keep subscription across [CallRegistry::resolve] calls, but deletes
 /// one time calls
 #[derive(Clone)]
 pub struct CallRegistry {

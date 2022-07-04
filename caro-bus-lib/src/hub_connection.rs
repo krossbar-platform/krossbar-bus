@@ -25,6 +25,7 @@ use crate::utils::dummy_tx;
 
 const RECONNECT_RETRY_PERIOD: Duration = Duration::from_secs(1);
 
+/// Connection state
 #[derive(Eq, PartialEq)]
 enum State {
     Open,
@@ -32,21 +33,23 @@ enum State {
     Reconnecting,
 }
 
-pub struct HubConnection {
+pub(crate) struct HubConnection {
+    /// Own service name
     service_name: String,
-    // Peer socket
+    /// Unix domain socket connected to the hub
     socket: UnixStream,
     /// Buffer to read incoming messages
     read_buffer: BytesMut,
     /// Registry to make calls and send responses to proper callers
-    /// Includes methods, signals, and states
+    /// For hub it's registration and connection requests
     call_registry: CallRegistry,
-    /// Peer state
+    ///  Connection state
     state: State,
     /// Monitor connection if connected
     monitor: Option<Arc<TokioRwLock<PeerConnection>>>,
 }
 
+/// Hub connection, which handles all network requests and responses
 impl HubConnection {
     fn new(service_name: String, socket: UnixStream) -> Self {
         Self {
@@ -59,6 +62,7 @@ impl HubConnection {
         }
     }
 
+    /// Perform hub connection and registration
     pub async fn connect(service_name: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
         info!("Connecting to a hub socket");
 
@@ -103,8 +107,8 @@ impl HubConnection {
         }
     }
 
-    /// Connect to a hub socket and send registration request
-    /// This method is blocking from the library workflow perspectire: we can't make any hub
+    /// Send registration request
+    /// This method is a blocking call from the library workflow perspectire: we can't make any hub
     /// calls without previous registration
     async fn register(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         // First connect to a socket
@@ -134,6 +138,8 @@ impl HubConnection {
         }
     }
 
+    /// Read incoming messages. [HubConnection] calls callbacks stored in the [CallRegistry] if message is a call
+    /// response. Otherwise will return incoming message to the caller
     pub async fn read_message(&mut self) -> Option<Message> {
         if self.state == State::Closed {
             return None;
@@ -205,6 +211,7 @@ impl HubConnection {
         self.socket.recv_fd().await
     }
 
+    /// Write outgoing message
     pub async fn write_message(&mut self, message: Message, callback: Sender<Message>) {
         match message.body() {
             MessageBody::ServiceMessage(ServiceMessage::Register { .. }) => {
@@ -221,7 +228,8 @@ impl HubConnection {
         };
     }
 
-    /// Signal or state change. If function fails to write into the socket, it tries to
+    /// Outgoing message, which doesn't require reponse. Mostly signals emissions or state changes.
+    /// If function fails to write into the socket, it tries to
     /// reconnect, but drops response mpsc sender, because even if reconnected, new peer
     /// will try to resibscribe, and current subscription becomes invalid
     async fn write_reconnect(&mut self, message: Message, callback: Sender<Message>) {
@@ -246,6 +254,10 @@ impl HubConnection {
             .await;
     }
 
+    /// Outgoing call, which requires reponse. Registration and connection requests.
+    /// If function fails to write into the socket, it tries to
+    /// reconnect and send message again. Having saved call in the [CallRegistry] will call
+    /// request callback eventually
     async fn call_reconnect(&mut self, mut message: Message, callback: Sender<Message>) {
         while let Err(err) = self
             .call_registry
@@ -265,6 +277,7 @@ impl HubConnection {
             .await;
     }
 
+    /// Send message to the Caro monitor if connected
     async fn send_monitor_message(
         &mut self,
         message: &Message,

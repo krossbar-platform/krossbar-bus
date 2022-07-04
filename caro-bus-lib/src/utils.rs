@@ -10,7 +10,7 @@ pub(crate) type TaskCall = (Message, Sender<TaskResponse>);
 pub(crate) type TaskChannel = Sender<TaskCall>;
 
 /// Send message request into mpsc channel and wait for the result
-pub async fn call_task<T>(
+pub(crate) async fn call_task<T>(
     task_tx: &Sender<(T, Sender<Message>)>,
     message: T,
 ) -> Result<Message, Box<dyn Error + Send + Sync>>
@@ -32,7 +32,8 @@ where
     }
 }
 
-pub fn dummy_tx() -> Sender<Message> {
+/// Dummy sender if caller doesn't care about a call response
+pub(crate) fn dummy_tx() -> Sender<Message> {
     let (tx, _rx) = mpsc::channel(1);
     tx
 }

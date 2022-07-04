@@ -26,7 +26,7 @@ enum State {
     Reconnecting,
 }
 
-pub struct PeerConnection {
+pub(crate) struct PeerConnection {
     /// Peer name
     name: String,
     // Peer socket
@@ -72,6 +72,8 @@ impl PeerConnection {
         }
     }
 
+    /// Read incoming messages. [PeerConnection] calls callbacks stored in the [CallRegistry] if message is a call
+    /// response. Otherwise will return incoming message to the caller
     pub async fn read_message(&mut self) -> Option<Message> {
         if self.state == State::Closed {
             return None;
@@ -110,6 +112,7 @@ impl PeerConnection {
         }
     }
 
+    /// Write outgoing message
     #[async_recursion]
     pub async fn write_message(
         &mut self,
@@ -142,6 +145,7 @@ impl PeerConnection {
         }
     }
 
+    /// Shut down connection
     pub async fn shutdown(&mut self) {
         trace!("Shutting down peer `{}` handle", self.name);
 
@@ -181,6 +185,10 @@ impl PeerConnection {
         Some(())
     }
 
+    /// Outgoing call, which requires reponse. Method calls, subscriptions and state watch requests.
+    /// If function fails to write into the socket, it tries to
+    /// reconnect and send message again. Having saved call in the [CallRegistry] will call
+    /// request callback eventually
     async fn call_reconnect(
         &mut self,
         mut message: Message,
@@ -213,6 +221,7 @@ impl PeerConnection {
         Some(())
     }
 
+    /// Send message to the Caro monitor if connected
     async fn send_monitor_message(
         &mut self,
         message: &Message,

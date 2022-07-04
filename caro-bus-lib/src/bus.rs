@@ -40,9 +40,9 @@ use caro_bus_common::{
 type Shared<T> = Arc<RwLock<T>>;
 type MethodCall = (Bson, OneSender<Response>);
 
-/// Bus connection handle. Associated with a service name on the hub.
-/// Used to connect to other services
-/// and register methods, signals, and states
+/// Bus connection handle. Associated with a service name at the hub.
+/// Use to connect to other services,
+/// register methods, signals, and states
 #[derive(Clone)]
 pub struct Bus {
     /// Own service name
@@ -70,7 +70,7 @@ impl Bus {
     /// Register service. Tries to register the service at the hub. The method may fail registering
     /// if the executable is not allowed to register with the given service name, or
     /// service name is already taken
-    pub async fn register(service_name: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub async fn register(service_name: String) -> Result<Self, Box<dyn Error>> {
         debug!("Registering service `{}`", service_name);
 
         let (task_tx, rx) = mpsc::channel(32);
@@ -87,7 +87,9 @@ impl Bus {
             monitor: None,
         };
 
-        let hub_connection = HubConnection::connect(service_name).await?;
+        let hub_connection = HubConnection::connect(service_name)
+            .await
+            .map_err(|err| err as Box<dyn Error>)?;
 
         // Start tokio task to handle incoming messages
         this.start(hub_connection, rx, shutdown_rx);
@@ -140,7 +142,7 @@ impl Bus {
         self.connect_perform(peer_service_name, false).await
     }
 
-    /// Perform connection to an another service.
+    /// Perform connection to an another service. Wait for service to connect.
     /// The method may fail if:
     /// 1. The service is not allowed to connect to a target service
     /// 2. Target service doesn't exist
@@ -151,6 +153,7 @@ impl Bus {
         self.connect_perform(peer_service_name, true).await
     }
 
+    /// Perform all communication for connection request
     async fn connect_perform(
         &mut self,
         peer_service_name: String,
@@ -202,6 +205,10 @@ impl Bus {
             .unwrap())
     }
 
+    /// Register service method. The function uses BSON internally for requests
+    /// and responses.\
+    /// **P** is paramtere type. Should be a deserializable structure\
+    /// **R** is method return type. Should be a serializable structure
     pub fn register_method<P, R>(
         &mut self,
         method_name: &String,
@@ -253,8 +260,7 @@ impl Bus {
         Ok(())
     }
 
-    /// Register service method. Returns a Future, which cna be waited for method calls
-    /// *Returns* receiver, which can be used to pull for method calls
+    /// Adds new method to a method map
     fn update_method_map(
         &mut self,
         method_name: &String,
@@ -280,6 +286,9 @@ impl Bus {
         Ok(rx)
     }
 
+    /// Register service signal.\
+    /// **T** is a signal type. Should be a serializable structure.\
+    /// **Returns** [Signal] handle which can be used to emit signal
     pub fn register_signal<T>(&mut self, signal_name: &String) -> Result<Signal<T>, Box<dyn Error>>
     where
         T: Serialize + 'static,
@@ -303,6 +312,10 @@ impl Bus {
         Ok(Signal::new(signal_name.clone(), tx))
     }
 
+    /// Register service signal.\
+    /// **T** is a signal type. Should be a serializable structure.\
+    /// **Returns** [State] handle which can be used to change state. Settings the state
+    /// will emit state change to watchers.
     pub fn register_state<T>(
         &mut self,
         state_name: &String,
@@ -420,6 +433,7 @@ impl Bus {
         }
     }
 
+    /// Handle incoming signal subscription
     async fn handle_incoming_signal_subscription(
         &self,
         subscriber_name: &String,
@@ -447,6 +461,7 @@ impl Bus {
         }
     }
 
+    /// Handle incoming request to watch state
     async fn handle_incoming_state_watch(
         &self,
         subscriber_name: &String,
@@ -519,7 +534,7 @@ impl Bus {
         None
     }
 
-    /// Well, receive client socket descriptor and create an entry in clients map
+    /// Register new [Peer] with a given unix socket file descriptor
     async fn register_peer_fd(&self, peer_service_name: &String, fd: RawFd, outgoing: bool) {
         let os_stream = unsafe { OsStream::from_raw_fd(fd) };
         let stream = UnixStream::from_std(os_stream).unwrap();
@@ -547,6 +562,7 @@ impl Bus {
             .insert(peer_service_name.clone(), new_service_connection);
     }
 
+    /// Register incoming Caro monitor connections
     async fn register_monitor(&mut self, fd: RawFd, hub_connection: &mut HubConnection) {
         let os_stream = unsafe { OsStream::from_raw_fd(fd) };
         let stream = UnixStream::from_std(os_stream).unwrap();
@@ -567,6 +583,7 @@ impl Bus {
         }
     }
 
+    /// Close service connection
     pub async fn close(&mut self) {
         debug!(
             "Shutting down service connection for `{}`",
