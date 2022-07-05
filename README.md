@@ -2,7 +2,6 @@
 
 Caro platform service bus implementation
 
-[![Crates.io][crates-badge]][crates-url]
 [![MIT licensed][mit-badge]][mit-url]
 [![Build Status][actions-badge]][actions-url]
 
