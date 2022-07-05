@@ -51,9 +51,9 @@ pub(crate) struct HubConnection {
 
 /// Hub connection, which handles all network requests and responses
 impl HubConnection {
-    fn new(service_name: String, socket: UnixStream) -> Self {
+    fn new(service_name: &String, socket: UnixStream) -> Self {
         Self {
-            service_name,
+            service_name: service_name.clone(),
             socket,
             read_buffer: BytesMut::with_capacity(64),
             call_registry: CallRegistry::new(),
@@ -63,7 +63,7 @@ impl HubConnection {
     }
 
     /// Perform hub connection and registration
-    pub async fn connect(service_name: String) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub async fn connect(service_name: &String) -> Result<Self, Box<dyn Error + Send + Sync>> {
         info!("Connecting to a hub socket");
 
         let socket = UnixStream::connect(HUB_SOCKET_PATH).await?;

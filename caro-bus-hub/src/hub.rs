@@ -12,7 +12,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::{client::Client, permissions::Permissions, Args};
+use crate::{args::Args, client::Client, permissions::Permissions};
 
 struct PendingConnectionRequest {
     requester_service_name: String,
@@ -341,6 +341,8 @@ impl Hub {
 
 impl Drop for Hub {
     fn drop(&mut self) {
+        info!("Shutting down Caro hub");
+
         if let Err(err) = fs::remove_file(HUB_SOCKET_PATH) {
             error!("Failed to remove hub socket file: {}", err);
         }

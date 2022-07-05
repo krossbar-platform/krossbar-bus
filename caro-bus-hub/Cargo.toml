@@ -17,3 +17,9 @@ tokio-send-fd = "0.9"
 uuid = { version = "1.1", features = ["v4", "fast-rng"] }
 
 caro-bus-common = { path = "../caro-bus-common" }
+
+[dev-dependencies]
+json = "0.12.4"
+tempdir = "0.3.7"
+
+caro-bus-lib = { path = "../caro-bus-lib" }

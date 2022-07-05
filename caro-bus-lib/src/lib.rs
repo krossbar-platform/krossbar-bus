@@ -7,4 +7,7 @@ pub mod state;
 mod utils;
 
 pub use bus::Bus;
-pub use caro_bus_common::errors::Error;
+pub use caro_bus_common::errors::Error as BusError;
+
+pub type Error = Box<dyn std::error::Error + Sync + Send>;
+pub type Result<T> = std::result::Result<T, Error>;

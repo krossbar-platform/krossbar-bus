@@ -340,14 +340,20 @@ impl Client {
     async fn send_message_to_hub(&self, message: Message) {
         let service_name = self.service_name.read().unwrap().clone();
 
-        self.hub_tx
+        match self
+            .hub_tx
             .send(ClientRequest {
                 uuid: self.uuid.clone(),
                 service_name,
                 message: message,
             })
             .await
-            .unwrap();
+        {
+            Ok(_) => {}
+            Err(_) => {
+                warn!("Failed to send hub message. Shutting down");
+            }
+        }
     }
 
     async fn perform_shutdown(&mut self, socket: &mut UnixStream, rx: &mut Receiver<HubReponse>) {

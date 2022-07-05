@@ -1,3 +1,4 @@
+mod args;
 mod client;
 mod hub;
 mod permissions;
@@ -8,29 +9,14 @@ use std::{
 };
 
 use clap::Parser;
-use log::{LevelFilter, *};
+use log::*;
 use tokio::sync::mpsc;
-
-use caro_bus_common::SERVICE_FILES_DIR;
-
-/// Caro bus hub
-#[derive(Parser, Debug)]
-#[clap(version, about, long_about = None)]
-pub struct Args {
-    /// Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE
-    #[clap(short, long, value_parser, default_value_t = LevelFilter::Trace)]
-    pub log_level: log::LevelFilter,
-
-    /// Number of times to greet
-    #[clap(short, long, value_parser, default_value_t = SERVICE_FILES_DIR.into())]
-    pub service_files_dir: String,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Starting Caro hub");
 
-    let args = Args::parse();
+    let args = args::Args::parse();
 
     pretty_env_logger::formatted_builder()
         .filter_level(args.log_level)

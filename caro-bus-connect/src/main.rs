@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(args.log_level)
         .init();
 
-    let mut bus = Bus::register(CONNECT_SERVICE_NAME.into())
+    let mut bus = Bus::register(&CONNECT_SERVICE_NAME.into())
         .await
         .expect("Failed to register connect service");
 

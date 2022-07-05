@@ -70,7 +70,7 @@ impl Bus {
     /// Register service. Tries to register the service at the hub. The method may fail registering
     /// if the executable is not allowed to register with the given service name, or
     /// service name is already taken
-    pub async fn register(service_name: String) -> Result<Self, Box<dyn Error>> {
+    pub async fn register(service_name: &String) -> crate::Result<Self> {
         debug!("Registering service `{}`", service_name);
 
         let (task_tx, rx) = mpsc::channel(32);
@@ -87,9 +87,7 @@ impl Bus {
             monitor: None,
         };
 
-        let hub_connection = HubConnection::connect(service_name)
-            .await
-            .map_err(|err| err as Box<dyn Error>)?;
+        let hub_connection = HubConnection::connect(service_name).await?;
 
         // Start tokio task to handle incoming messages
         this.start(hub_connection, rx, shutdown_rx);
@@ -138,7 +136,7 @@ impl Bus {
     /// The method may fail if:
     /// 1. The service is not allowed to connect to a target service
     /// 2. Target service is not registered or doesn't exist
-    pub async fn connect(&mut self, peer_service_name: String) -> Result<Peer, Box<dyn Error>> {
+    pub async fn connect(&mut self, peer_service_name: String) -> crate::Result<Peer> {
         self.connect_perform(peer_service_name, false).await
     }
 
@@ -146,10 +144,7 @@ impl Bus {
     /// The method may fail if:
     /// 1. The service is not allowed to connect to a target service
     /// 2. Target service doesn't exist
-    pub async fn connect_await(
-        &mut self,
-        peer_service_name: String,
-    ) -> Result<Peer, Box<dyn Error>> {
+    pub async fn connect_await(&mut self, peer_service_name: String) -> crate::Result<Peer> {
         self.connect_perform(peer_service_name, true).await
     }
 
@@ -158,7 +153,7 @@ impl Bus {
         &mut self,
         peer_service_name: String,
         await_connection: bool,
-    ) -> Result<Peer, Box<dyn Error>> {
+    ) -> crate::Result<Peer> {
         debug!("Connecting to a service `{}`", peer_service_name);
 
         // We may have already connected peer. So first we check if connected
@@ -168,8 +163,7 @@ impl Bus {
                 &self.task_tx,
                 Message::new_connection(peer_service_name.clone(), await_connection),
             )
-            .await
-            .map_err(|e| e as Box<dyn Error>)?
+            .await?
             .body()
             {
                 // Client can receive two types of responses for a connection request:

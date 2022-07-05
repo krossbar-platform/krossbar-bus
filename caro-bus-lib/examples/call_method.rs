@@ -9,7 +9,7 @@ async fn main() {
         .filter_level(LevelFilter::Debug)
         .init();
 
-    let mut bus = Bus::register("com.examples.call_method".into())
+    let mut bus = Bus::register(&"com.examples.call_method".into())
         .await
         .unwrap();
 
