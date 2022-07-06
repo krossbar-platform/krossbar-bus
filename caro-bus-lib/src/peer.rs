@@ -146,12 +146,12 @@ impl Peer {
     /// **R** is return type. Should be a deserializable structure
     pub async fn call<P: Serialize, R: DeserializeOwned>(
         &mut self,
-        method_name: &String,
+        method_name: &str,
         params: &P,
-    ) -> Result<R, Box<dyn Error>> {
+    ) -> crate::Result<R> {
         let message = Message::new_call(
             self.peer_service_name.read().unwrap().clone(),
-            method_name.clone(),
+            method_name.into(),
             params,
         );
 
@@ -198,18 +198,15 @@ impl Peer {
     /// **T** is the signal type. Should be a deserializable structure
     pub async fn subscribe<T: DeserializeOwned>(
         &mut self,
-        signal_name: &String,
+        signal_name: &str,
         callback: impl Fn(&T) + Send + 'static,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> crate::Result<()> {
         let message = Message::new_subscription(
             self.service_name.read().unwrap().clone(),
-            signal_name.clone(),
+            signal_name.into(),
         );
 
-        let (response, rx) = self
-            .make_subscription_call(message, signal_name)
-            .await
-            .map_err(|err| err as Box<dyn Error>)?;
+        let (response, rx) = self.make_subscription_call(message, signal_name).await?;
 
         match response.body() {
             // Succesfully performed remote method call
@@ -233,18 +230,13 @@ impl Peer {
     /// **Returns** current state value
     pub async fn watch<T: DeserializeOwned>(
         &mut self,
-        state_name: &String,
+        state_name: &str,
         callback: impl Fn(&T) + Send + 'static,
-    ) -> Result<T, Box<dyn Error>> {
-        let message = Message::new_watch(
-            self.service_name.read().unwrap().clone(),
-            state_name.clone(),
-        );
+    ) -> crate::Result<T> {
+        let message =
+            Message::new_watch(self.service_name.read().unwrap().clone(), state_name.into());
 
-        let (response, rx) = self
-            .make_subscription_call(message, state_name)
-            .await
-            .map_err(|err| err as Box<dyn Error>)?;
+        let (response, rx) = self.make_subscription_call(message, state_name).await?;
 
         match response.body() {
             // Succesfully performed remote method call
@@ -276,7 +268,7 @@ impl Peer {
     async fn make_subscription_call(
         &mut self,
         message: Message,
-        signal_name: &String,
+        signal_name: &str,
     ) -> Result<(Message, Receiver<Message>), Box<dyn Error + Sync + Send>> {
         // This is a tricky one. First we use channel to read subscription status, and after that
         // for incomin signal emission
@@ -307,11 +299,11 @@ impl Peer {
 
     /// Start task to receive signals emission, state changes and calling user callback
     fn start_subscription_receiving_task<T: DeserializeOwned>(
-        signal_name: &String,
+        signal_name: &str,
         mut receiver: Receiver<Message>,
         callback: impl Fn(&T) + Send + 'static,
     ) {
-        let signal_name = signal_name.clone();
+        let signal_name: String = signal_name.into();
 
         // Start listening to signal emissions
         tokio::spawn(async move {

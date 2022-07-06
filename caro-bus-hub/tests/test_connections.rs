@@ -75,7 +75,7 @@ async fn test_non_existing_service_connections() {
     let service_name = "non.existing.connection.initiator";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let mut bus = Bus::register(&service_name.into())
+    let mut bus = Bus::register(service_name)
         .await
         .expect("Failed to register service");
 
@@ -125,7 +125,7 @@ async fn test_dead_service_connections() {
     let dead_service_name = "dead.connection.target";
     write_service_file(service_dir.path(), dead_service_name, service_file_json).await;
 
-    let mut bus = Bus::register(&service_name.into())
+    let mut bus = Bus::register(service_name)
         .await
         .expect("Failed to register service");
 
@@ -162,7 +162,7 @@ async fn test_non_allowed_connections() {
     let target_service_name = "non.allowed.connection.target";
     write_service_file(service_dir.path(), target_service_name, service_file_json).await;
 
-    let _bus2 = Bus::register(&target_service_name.into())
+    let _bus2 = Bus::register(target_service_name)
         .await
         .expect("Failed to register service");
 
@@ -180,7 +180,7 @@ async fn test_non_allowed_connections() {
     let service_name = "non.allowed.connection.initiator";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let mut bus2 = Bus::register(&service_name.into())
+    let mut bus2 = Bus::register(service_name)
         .await
         .expect("Failed to register service");
 
@@ -217,7 +217,7 @@ async fn test_allowed_connection() {
     let target_service_name = "allowed.connection.target";
     write_service_file(service_dir.path(), target_service_name, service_file_json).await;
 
-    let _bus1 = Bus::register(&target_service_name.into())
+    let _bus1 = Bus::register(target_service_name)
         .await
         .expect("Failed to register service");
 
@@ -235,11 +235,11 @@ async fn test_allowed_connection() {
     let service_name = "allowed.connection.initiator";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let mut bus2 = Bus::register(&service_name.into())
+    let mut bus2 = Bus::register(service_name)
         .await
         .expect("Failed to register service");
 
-    bus2.connect(target_service_name.into())
+    bus2.connect(target_service_name)
         .await
         .expect("Allowed connection failed");
 
@@ -287,16 +287,16 @@ async fn test_await_connection() {
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
     let join = tokio::spawn(async move {
-        let mut bus2 = Bus::register(&service_name.into())
+        let mut bus2 = Bus::register(service_name)
             .await
             .expect("Failed to register service");
 
-        bus2.connect_await(target_service_name.into())
+        bus2.connect_await(target_service_name)
             .await
             .expect("Allowed connection failed");
     });
 
-    let _bus1 = Bus::register(&target_service_name.into())
+    let _bus1 = Bus::register(target_service_name)
         .await
         .expect("Failed to register service");
 

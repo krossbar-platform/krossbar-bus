@@ -80,18 +80,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(args.log_level)
         .init();
 
-    let mut bus = Bus::register(&MONITOR_SERVICE_NAME.into())
+    let mut bus = Bus::register(MONITOR_SERVICE_NAME)
         .await
         .expect("Failed to register monitor");
 
-    bus.register_method::<MonitorMessage, ()>(
-        &MONITOR_METHOD.into(),
-        |message: &MonitorMessage| handle_message(message),
-    )
+    bus.register_method::<MonitorMessage, ()>(MONITOR_METHOD, |message: &MonitorMessage| {
+        handle_message(message)
+    })
     .expect("Failed to register signalling function");
 
     let _peer = bus
-        .connect_await(args.target_service)
+        .connect_await(&args.target_service)
         .await
         .expect("Failed to connect to the target service");
 

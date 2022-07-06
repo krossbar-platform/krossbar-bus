@@ -11,11 +11,9 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut bus = Bus::register(&"com.examples.register_signal".into())
-        .await
-        .unwrap();
+    let mut bus = Bus::register("com.examples.register_signal").await.unwrap();
 
-    let signal = bus.register_signal::<i64>(&"signal".into()).unwrap();
+    let signal = bus.register_signal::<i64>("signal").unwrap();
 
     let mut increment = 0;
     loop {

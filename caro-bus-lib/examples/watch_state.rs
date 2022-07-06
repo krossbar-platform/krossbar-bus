@@ -9,17 +9,12 @@ async fn main() {
         .filter_level(LevelFilter::Debug)
         .init();
 
-    let mut bus = Bus::register(&"com.examples.watch_state".into())
-        .await
-        .unwrap();
+    let mut bus = Bus::register("com.examples.watch_state").await.unwrap();
 
-    let mut peer_connection = bus
-        .connect("com.examples.register_state".into())
-        .await
-        .unwrap();
+    let mut peer_connection = bus.connect("com.examples.register_state").await.unwrap();
 
     let current_state = peer_connection
-        .watch(&"state".into(), |value: &i32| {
+        .watch("state", |value: &i32| {
             debug!("New state value: {}", value);
         })
         .await

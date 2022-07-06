@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
-use std::{error::Error, io::Result as IoResult, os::unix::prelude::RawFd};
+use std::{io::Result as IoResult, os::unix::prelude::RawFd};
 
 use async_recursion::async_recursion;
 use bytes::BytesMut;
@@ -51,9 +51,9 @@ pub(crate) struct HubConnection {
 
 /// Hub connection, which handles all network requests and responses
 impl HubConnection {
-    fn new(service_name: &String, socket: UnixStream) -> Self {
+    fn new(service_name: &str, socket: UnixStream) -> Self {
         Self {
-            service_name: service_name.clone(),
+            service_name: service_name.into(),
             socket,
             read_buffer: BytesMut::with_capacity(64),
             call_registry: CallRegistry::new(),
@@ -63,7 +63,7 @@ impl HubConnection {
     }
 
     /// Perform hub connection and registration
-    pub async fn connect(service_name: &String) -> Result<Self, Box<dyn Error + Send + Sync>> {
+    pub async fn connect(service_name: &str) -> crate::Result<Self> {
         info!("Connecting to a hub socket");
 
         let socket = UnixStream::connect(HUB_SOCKET_PATH).await?;
@@ -110,7 +110,7 @@ impl HubConnection {
     /// Send registration request
     /// This method is a blocking call from the library workflow perspectire: we can't make any hub
     /// calls without previous registration
-    async fn register(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn register(&mut self) -> crate::Result<()> {
         // First connect to a socket
         let self_name = self.service_name.clone();
         debug!("Performing service `{}` registration", self_name);

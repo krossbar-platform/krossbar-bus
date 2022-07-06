@@ -9,11 +9,9 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut bus = Bus::register(&"com.examples.register_method".into())
-        .await
-        .unwrap();
+    let mut bus = Bus::register("com.examples.register_method").await.unwrap();
 
-    bus.register_method(&"method".into(), |val: &i32| -> String {
+    bus.register_method("method", |val: &i32| -> String {
         format!("Hello, {}", val).into()
     })
     .unwrap();

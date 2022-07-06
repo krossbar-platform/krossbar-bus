@@ -90,7 +90,7 @@ async fn test_non_existing_service_name() {
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
-    match Bus::register(&"non.existing.name".into()).await {
+    match Bus::register("non.existing.name").await {
         Ok(_) => panic!("Shouldn't be allowed"),
         Err(err) => {
             println!("Valid connection error: {}", err.to_string())
@@ -126,7 +126,7 @@ async fn test_non_allowed_service_name() {
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
-    match Bus::register(&service_name.into()).await {
+    match Bus::register(service_name).await {
         Ok(_) => panic!("Shouldn't be allowed"),
         Err(err) => {
             println!("Valid connection error: {}", err.to_string())
@@ -161,7 +161,7 @@ async fn test_valid_registration() {
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
-    Bus::register(&service_name.into())
+    Bus::register(service_name)
         .await
         .expect("Failed to register valid service");
 

@@ -11,11 +11,9 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut bus = Bus::register(&"com.examples.register_state".into())
-        .await
-        .unwrap();
+    let mut bus = Bus::register("com.examples.register_state").await.unwrap();
 
-    let mut state = bus.register_state(&"state".into(), 42).unwrap();
+    let mut state = bus.register_state("state", 42).unwrap();
 
     let states = vec![11, 42, 69];
     let mut iter = states.into_iter().cycle();

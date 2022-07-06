@@ -84,7 +84,7 @@ async fn handle_input_line(service: &mut Peer, line: String) -> bool {
             }
         };
 
-        match service.call(&words[1].into(), &json).await {
+        match service.call(words[1], &json).await {
             Ok(response) => format_response("Method", words[1], &response),
             Err(err) => {
                 println!("Failed to make a call: {}", err.to_string())
@@ -98,7 +98,7 @@ async fn handle_input_line(service: &mut Peer, line: String) -> bool {
 
         let signal_name: String = words[1].into();
         if let Err(err) = service
-            .subscribe(&words[1].into(), move |json: &Value| {
+            .subscribe(words[1], move |json: &Value| {
                 format_response("Signal", &signal_name, json);
             })
             .await
@@ -117,7 +117,7 @@ async fn handle_input_line(service: &mut Peer, line: String) -> bool {
 
         let state_name: String = words[1].into();
         match service
-            .watch(&words[1].into(), move |json: &Value| {
+            .watch(words[1], move |json: &Value| {
                 format_response("State", &state_name, json);
             })
             .await
@@ -146,14 +146,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(args.log_level)
         .init();
 
-    let mut bus = Bus::register(&CONNECT_SERVICE_NAME.into())
+    let mut bus = Bus::register(CONNECT_SERVICE_NAME)
         .await
         .expect("Failed to register connect service");
 
     debug!("Succesfully registered");
 
     let mut peer = bus
-        .connect_await(args.target_service)
+        .connect_await(&args.target_service)
         .await
         .expect("Failed to connect to the target service");
 

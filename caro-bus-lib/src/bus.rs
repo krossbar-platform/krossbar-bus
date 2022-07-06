@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    error::Error,
     os::unix::{
         net::UnixStream as OsStream,
         prelude::{FromRawFd, RawFd},
@@ -70,14 +69,14 @@ impl Bus {
     /// Register service. Tries to register the service at the hub. The method may fail registering
     /// if the executable is not allowed to register with the given service name, or
     /// service name is already taken
-    pub async fn register(service_name: &String) -> crate::Result<Self> {
+    pub async fn register(service_name: &str) -> crate::Result<Self> {
         debug!("Registering service `{}`", service_name);
 
         let (task_tx, rx) = mpsc::channel(32);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
         let mut this = Self {
-            service_name: Arc::new(RwLock::new(service_name.clone())),
+            service_name: Arc::new(RwLock::new(service_name.into())),
             peers: Arc::new(TokioRwLock::new(HashMap::new())),
             methods: Arc::new(RwLock::new(HashMap::new())),
             signals: Arc::new(RwLock::new(HashMap::new())),
@@ -136,7 +135,7 @@ impl Bus {
     /// The method may fail if:
     /// 1. The service is not allowed to connect to a target service
     /// 2. Target service is not registered or doesn't exist
-    pub async fn connect(&mut self, peer_service_name: String) -> crate::Result<Peer> {
+    pub async fn connect(&mut self, peer_service_name: &str) -> crate::Result<Peer> {
         self.connect_perform(peer_service_name, false).await
     }
 
@@ -144,24 +143,24 @@ impl Bus {
     /// The method may fail if:
     /// 1. The service is not allowed to connect to a target service
     /// 2. Target service doesn't exist
-    pub async fn connect_await(&mut self, peer_service_name: String) -> crate::Result<Peer> {
+    pub async fn connect_await(&mut self, peer_service_name: &str) -> crate::Result<Peer> {
         self.connect_perform(peer_service_name, true).await
     }
 
     /// Perform all communication for connection request
     async fn connect_perform(
         &mut self,
-        peer_service_name: String,
+        peer_service_name: &str,
         await_connection: bool,
     ) -> crate::Result<Peer> {
         debug!("Connecting to a service `{}`", peer_service_name);
 
         // We may have already connected peer. So first we check if connected
         // and if not, perform connection request
-        if !self.peers.read().await.contains_key(&peer_service_name) {
+        if !self.peers.read().await.contains_key(peer_service_name) {
             match utils::call_task(
                 &self.task_tx,
-                Message::new_connection(peer_service_name.clone(), await_connection),
+                Message::new_connection(peer_service_name.into(), await_connection),
             )
             .await?
             .body()
@@ -172,7 +171,7 @@ impl Bus {
                 // Handle second case next
                 MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
                     info!("Connection to `{}` succeded", peer_service_name);
-                    self.register_peer_fd(&peer_service_name, *fd, true).await;
+                    self.register_peer_fd(peer_service_name, *fd, true).await;
                 }
                 // Hub doesn't allow connection
                 MessageBody::Response(Response::Error(err)) => {
@@ -194,7 +193,7 @@ impl Bus {
             .peers
             .read()
             .await
-            .get(&peer_service_name)
+            .get(peer_service_name)
             .cloned()
             .unwrap())
     }
@@ -205,14 +204,14 @@ impl Bus {
     /// **R** is method return type. Should be a serializable structure
     pub fn register_method<P, R>(
         &mut self,
-        method_name: &String,
+        method_name: &str,
         callback: impl Fn(&P) -> R + Send + 'static,
-    ) -> Result<(), Box<dyn Error>>
+    ) -> crate::Result<()>
     where
         P: DeserializeOwned + 'static,
         R: Serialize + 'static,
     {
-        let method_name = method_name.clone();
+        let method_name = method_name.into();
         let mut rx = self.update_method_map(&method_name)?;
 
         tokio::spawn(async move {
@@ -255,10 +254,7 @@ impl Bus {
     }
 
     /// Adds new method to a method map
-    fn update_method_map(
-        &mut self,
-        method_name: &String,
-    ) -> Result<Receiver<MethodCall>, Box<dyn Error>> {
+    fn update_method_map(&mut self, method_name: &String) -> crate::Result<Receiver<MethodCall>> {
         // The function just creates a method handle, which performs type conversions
         // for incoming data and client replies. See [Method] for details
         let mut methods = self.methods.write().unwrap();
@@ -283,7 +279,7 @@ impl Bus {
     /// Register service signal.\
     /// **T** is a signal type. Should be a serializable structure.\
     /// **Returns** [Signal] handle which can be used to emit signal
-    pub fn register_signal<T>(&mut self, signal_name: &String) -> Result<Signal<T>, Box<dyn Error>>
+    pub fn register_signal<T>(&mut self, signal_name: &str) -> crate::Result<Signal<T>>
     where
         T: Serialize + 'static,
     {
@@ -300,10 +296,10 @@ impl Bus {
 
         let (tx, _rx) = broadcast::channel(5);
 
-        signals.insert(signal_name.clone(), tx.clone());
+        signals.insert(signal_name.into(), tx.clone());
 
         info!("Succesfully registered signal: {}", signal_name);
-        Ok(Signal::new(signal_name.clone(), tx))
+        Ok(Signal::new(signal_name.into(), tx))
     }
 
     /// Register service signal.\
@@ -312,9 +308,9 @@ impl Bus {
     /// will emit state change to watchers.
     pub fn register_state<T>(
         &mut self,
-        state_name: &String,
+        state_name: &str,
         initial_value: T,
-    ) -> Result<State<T>, Box<dyn Error>>
+    ) -> crate::Result<State<T>>
     where
         T: Serialize + 'static,
     {
@@ -336,10 +332,10 @@ impl Bus {
         let bson = bson::to_bson(&initial_value).unwrap();
         let (watch_tx, watch_rx) = watch::channel(bson);
 
-        states.insert(state_name.clone(), (tx.clone(), watch_rx));
+        states.insert(state_name.into(), (tx.clone(), watch_rx));
 
         info!("Succesfully registered state: {}", state_name);
-        Ok(State::new(state_name.clone(), initial_value, tx, watch_tx))
+        Ok(State::new(state_name.into(), initial_value, tx, watch_tx))
     }
 
     /// Handle messages incoming form an existent peer connection
@@ -529,7 +525,7 @@ impl Bus {
     }
 
     /// Register new [Peer] with a given unix socket file descriptor
-    async fn register_peer_fd(&self, peer_service_name: &String, fd: RawFd, outgoing: bool) {
+    async fn register_peer_fd(&self, peer_service_name: &str, fd: RawFd, outgoing: bool) {
         let os_stream = unsafe { OsStream::from_raw_fd(fd) };
         let stream = UnixStream::from_std(os_stream).unwrap();
 
@@ -537,7 +533,7 @@ impl Bus {
         // connection requests by just returning already existing handle
         let mut new_service_connection = Peer::new(
             self.service_name.read().unwrap().clone(),
-            peer_service_name.clone(),
+            peer_service_name.into(),
             stream,
             self.task_tx.clone(),
             outgoing,
@@ -553,7 +549,7 @@ impl Bus {
         self.peers
             .try_write()
             .unwrap()
-            .insert(peer_service_name.clone(), new_service_connection);
+            .insert(peer_service_name.into(), new_service_connection);
     }
 
     /// Register incoming Caro monitor connections
