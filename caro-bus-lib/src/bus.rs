@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    future::Future,
     os::unix::{
         net::UnixStream as OsStream,
         prelude::{FromRawFd, RawFd},
@@ -202,14 +203,15 @@ impl Bus {
     /// and responses.\
     /// **P** is paramtere type. Should be a deserializable structure\
     /// **R** is method return type. Should be a serializable structure
-    pub fn register_method<P, R>(
+    pub fn register_method<P, R, Ret>(
         &mut self,
         method_name: &str,
-        callback: impl Fn(&P) -> R + Send + 'static,
+        callback: impl Fn(P) -> Ret + Send + Sync + 'static,
     ) -> crate::Result<()>
     where
-        P: DeserializeOwned + 'static,
-        R: Serialize + 'static,
+        P: DeserializeOwned + Send + 'static,
+        R: Serialize + Send + 'static,
+        Ret: Future<Output = R> + Send,
     {
         let method_name = method_name.into();
         let mut rx = self.update_method_map(&method_name)?;
@@ -221,7 +223,7 @@ impl Bus {
                         match bson::from_bson::<P>(params) {
                             Ok(params) => {
                                 // Receive method call response
-                                let result = callback(&params);
+                                let result = callback(params).await;
 
                                 // Deserialize and send user response
                                 calback_tx

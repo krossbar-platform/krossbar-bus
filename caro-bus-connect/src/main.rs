@@ -1,3 +1,7 @@
+// Waiting until Github updates rustc
+#![allow(stable_features)]
+#![feature(stdin_forwarders)]
+
 use std::{
     io::{self, Write},
     str::FromStr,
@@ -98,8 +102,11 @@ async fn handle_input_line(service: &mut Peer, line: String) -> bool {
 
         let signal_name: String = words[1].into();
         if let Err(err) = service
-            .subscribe(words[1], move |json: &Value| {
-                format_response("Signal", &signal_name, json);
+            .subscribe(words[1], move |json: Value| {
+                let endpoint_name = signal_name.clone();
+                async move {
+                    format_response("Signal", &endpoint_name, &json);
+                }
             })
             .await
         {
@@ -117,8 +124,11 @@ async fn handle_input_line(service: &mut Peer, line: String) -> bool {
 
         let state_name: String = words[1].into();
         match service
-            .watch(words[1], move |json: &Value| {
-                format_response("State", &state_name, json);
+            .watch(words[1], move |json: Value| {
+                let endpoint_name = state_name.clone();
+                async move {
+                    format_response("State", &endpoint_name, &json);
+                }
             })
             .await
         {

@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt::Debug,
+    future::Future,
     sync::{Arc, RwLock},
 };
 
@@ -196,11 +197,15 @@ impl Peer {
 
     /// Remote signal subscription\
     /// **T** is the signal type. Should be a deserializable structure
-    pub async fn subscribe<T: DeserializeOwned>(
+    pub async fn subscribe<T, Ret>(
         &mut self,
         signal_name: &str,
-        callback: impl Fn(&T) + Send + 'static,
-    ) -> crate::Result<()> {
+        callback: impl Fn(T) -> Ret + Send + Sync + 'static,
+    ) -> crate::Result<()>
+    where
+        T: DeserializeOwned + Send,
+        Ret: Future<Output = ()> + Send,
+    {
         let message = Message::new_subscription(
             self.service_name.read().unwrap().clone(),
             signal_name.into(),
@@ -228,11 +233,15 @@ impl Peer {
     /// Start watching remote state changes\
     /// **T** is the signal type. Should be a deserializable structure\
     /// **Returns** current state value
-    pub async fn watch<T: DeserializeOwned>(
+    pub async fn watch<T, Ret>(
         &mut self,
         state_name: &str,
-        callback: impl Fn(&T) + Send + 'static,
-    ) -> crate::Result<T> {
+        callback: impl Fn(T) -> Ret + Send + Sync + 'static,
+    ) -> crate::Result<T>
+    where
+        T: DeserializeOwned + Send,
+        Ret: Future<Output = ()> + Send,
+    {
         let message =
             Message::new_watch(self.service_name.read().unwrap().clone(), state_name.into());
 
@@ -298,11 +307,14 @@ impl Peer {
     }
 
     /// Start task to receive signals emission, state changes and calling user callback
-    fn start_subscription_receiving_task<T: DeserializeOwned>(
+    fn start_subscription_receiving_task<T, Ret>(
         signal_name: &str,
         mut receiver: Receiver<Message>,
-        callback: impl Fn(&T) + Send + 'static,
-    ) {
+        callback: impl Fn(T) -> Ret + Send + Sync + 'static,
+    ) where
+        T: DeserializeOwned + Send,
+        Ret: Future<Output = ()> + Send,
+    {
         let signal_name: String = signal_name.into();
 
         // Start listening to signal emissions
@@ -316,7 +328,7 @@ impl Peer {
                                 match bson::from_bson::<T>(value.clone()) {
                                     Ok(value) => {
                                         // Call back
-                                        callback(&value);
+                                        callback(value).await;
                                     }
                                     Err(err) => {
                                         error!(
@@ -330,7 +342,7 @@ impl Peer {
                                 match bson::from_bson::<T>(value.clone()) {
                                     Ok(value) => {
                                         // Call back
-                                        callback(&value);
+                                        callback(value);
                                     }
                                     Err(err) => {
                                         error!(
