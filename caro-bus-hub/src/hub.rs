@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fs, sync::Arc};
 
 use caro_bus_common::{
+    self as common,
     errors::Error as BusError,
     messages::{IntoMessage, Message, MessageBody, Response, ServiceMessage},
-    HUB_SOCKET_PATH,
 };
 use log::*;
 use tokio::{
@@ -64,11 +64,12 @@ impl Hub {
 
     /// Start listening for incoming connections
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match UnixListener::bind(HUB_SOCKET_PATH) {
+        let socket_path = common::get_hub_socket_path();
+        match UnixListener::bind(socket_path.clone()) {
             Ok(listener) => {
                 info!(
                     "Succesfully started listening for incoming connections at: {}",
-                    HUB_SOCKET_PATH
+                    socket_path
                 );
 
                 loop {
@@ -93,7 +94,7 @@ impl Hub {
             Err(err) => {
                 error!(
                     "Failed to start listening at: {}. Another hub instance is running?",
-                    HUB_SOCKET_PATH
+                    socket_path
                 );
                 return Err(Box::new(err));
             }
@@ -343,7 +344,7 @@ impl Drop for Hub {
     fn drop(&mut self) {
         info!("Shutting down Caro hub");
 
-        if let Err(err) = fs::remove_file(HUB_SOCKET_PATH) {
+        if let Err(err) = fs::remove_file(common::get_hub_socket_path()) {
             error!("Failed to remove hub socket file: {}", err);
         }
     }

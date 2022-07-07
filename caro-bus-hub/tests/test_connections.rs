@@ -1,5 +1,6 @@
-use std::{path::Path, time::Duration};
+use std::{env, path::Path, time::Duration};
 
+use caro_bus_common::HUB_SOCKET_PATH_ENV;
 use json::JsonValue;
 use log::LevelFilter;
 use tempdir::TempDir;
@@ -13,17 +14,18 @@ use tokio::{
 use caro_bus_hub::{args::Args, hub::Hub};
 use caro_bus_lib::Bus;
 
-async fn start_hub(service_files_dir: &str) -> Sender<()> {
+async fn start_hub(socket_path: &str, service_files_dir: &str) -> Sender<()> {
+    env::set_var(HUB_SOCKET_PATH_ENV, socket_path);
+
     let args = Args {
         log_level: LevelFilter::Debug,
         service_files_dir: service_files_dir.into(),
     };
 
-    // Uncomment for logging. Doesn't work with multiple tests
-    // pretty_env_logger::formatted_builder()
-    //     .filter_level(args.log_level)
-    //     .init();
-
+    let _ = pretty_env_logger::formatted_builder()
+        .is_test(true)
+        .filter_level(args.log_level)
+        .try_init();
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
     tokio::spawn(async move {
@@ -54,10 +56,23 @@ async fn write_service_file(service_dir: &Path, service_name: &str, content: Jso
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_non_existing_service_connections() {
+    let socket_dir = TempDir::new("caro_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_path: String = socket_dir
+        .path()
+        .join("caro_hub.socket")
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .into();
+
     let service_dir =
         TempDir::new("caro_test_non_existing_connection").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(service_dir.path().as_os_str().to_str().unwrap()).await;
+    let shutdown_tx = start_hub(
+        &socket_path,
+        service_dir.path().as_os_str().to_str().unwrap(),
+    )
+    .await;
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
@@ -91,9 +106,22 @@ async fn test_non_existing_service_connections() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_dead_service_connections() {
+    let socket_dir = TempDir::new("caro_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_path: String = socket_dir
+        .path()
+        .join("caro_hub.socket")
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .into();
+
     let service_dir = TempDir::new("caro_test_dead_connection").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(service_dir.path().as_os_str().to_str().unwrap()).await;
+    let shutdown_tx = start_hub(
+        &socket_path,
+        service_dir.path().as_os_str().to_str().unwrap(),
+    )
+    .await;
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
@@ -141,10 +169,23 @@ async fn test_dead_service_connections() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_non_allowed_connections() {
+    let socket_dir = TempDir::new("caro_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_path: String = socket_dir
+        .path()
+        .join("caro_hub.socket")
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .into();
+
     let service_dir =
         TempDir::new("test_non_allowed_connections").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(service_dir.path().as_os_str().to_str().unwrap()).await;
+    let shutdown_tx = start_hub(
+        &socket_path,
+        service_dir.path().as_os_str().to_str().unwrap(),
+    )
+    .await;
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
@@ -196,10 +237,23 @@ async fn test_non_allowed_connections() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_allowed_connection() {
+    let socket_dir = TempDir::new("caro_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_path: String = socket_dir
+        .path()
+        .join("caro_hub.socket")
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .into();
+
     let service_dir =
         TempDir::new("test_non_allowed_connections").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(service_dir.path().as_os_str().to_str().unwrap()).await;
+    let shutdown_tx = start_hub(
+        &socket_path,
+        service_dir.path().as_os_str().to_str().unwrap(),
+    )
+    .await;
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
@@ -251,10 +305,23 @@ async fn test_allowed_connection() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_await_connection() {
+    let socket_dir = TempDir::new("caro_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_path: String = socket_dir
+        .path()
+        .join("caro_hub.socket")
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .into();
+
     let service_dir =
         TempDir::new("test_non_allowed_connections").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(service_dir.path().as_os_str().to_str().unwrap()).await;
+    let shutdown_tx = start_hub(
+        &socket_path,
+        service_dir.path().as_os_str().to_str().unwrap(),
+    )
+    .await;
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 

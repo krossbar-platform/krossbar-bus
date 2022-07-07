@@ -4,12 +4,12 @@ use std::{io::Result as IoResult, os::unix::prelude::RawFd};
 
 use async_recursion::async_recursion;
 use bytes::BytesMut;
-use caro_bus_common::monitor::{MonitorMessage, MonitorMessageDirection, MONITOR_METHOD};
-use caro_bus_common::HUB_SOCKET_PATH;
 use caro_bus_common::{
+    self as common,
     call_registry::CallRegistry,
     errors::Error as BusError,
     messages::{IntoMessage, Message, MessageBody, Response, ServiceMessage},
+    monitor::{MonitorMessage, MonitorMessageDirection, MONITOR_METHOD},
     net,
 };
 use log::*;
@@ -66,7 +66,7 @@ impl HubConnection {
     pub async fn connect(service_name: &str) -> crate::Result<Self> {
         info!("Connecting to a hub socket");
 
-        let socket = UnixStream::connect(HUB_SOCKET_PATH).await?;
+        let socket = UnixStream::connect(common::get_hub_socket_path()).await?;
 
         let mut connection = HubConnection::new(service_name, socket);
         connection.register().await?;
@@ -77,7 +77,7 @@ impl HubConnection {
     async fn reconnect(&mut self) {
         loop {
             // Try to reconnect to the hub. I fails, we just retry
-            match UnixStream::connect(HUB_SOCKET_PATH).await {
+            match UnixStream::connect(common::get_hub_socket_path()).await {
                 Ok(socket) => {
                     info!("Succesfully reconnected to the hub");
                     self.socket = socket;
