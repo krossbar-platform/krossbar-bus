@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use log::LevelFilter;
 use tokio;
 
@@ -13,9 +11,10 @@ async fn main() {
 
     let mut bus = Bus::register("com.examples.register_method").await.unwrap();
 
-    bus.register_method("method", async move |val: i32| -> String {
-        format!("Hello, {}", val).into()
-    })
+    bus.register_method(
+        "method",
+        |val: i32| async move { format!("Hello, {}", val) },
+    )
     .unwrap();
 
     let _ = tokio::signal::ctrl_c().await;

@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use log::{LevelFilter, *};
 use tokio;
 
@@ -16,7 +14,7 @@ async fn main() {
     let mut peer_connection = bus.connect("com.examples.register_state").await.unwrap();
 
     let current_state = peer_connection
-        .watch("state", async move |value: i32| {
+        .watch("state", |value: i32| async move {
             debug!("New state value: {}", value);
         })
         .await

@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use log::{LevelFilter, *};
 use tokio;
 
@@ -21,7 +19,7 @@ async fn main() {
         .unwrap();
 
     peer_connection
-        .subscribe("signal", async move |value: i64| {
+        .subscribe("signal", |value: i64| async move {
             debug!("Signal value: {}", value);
         })
         .await

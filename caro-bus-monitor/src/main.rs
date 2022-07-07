@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use clap::{self, Parser};
 use colored::*;
 use log::{LevelFilter, *};
@@ -86,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("Failed to register monitor");
 
-    bus.register_method(MONITOR_METHOD, async move |message: MonitorMessage| {
+    bus.register_method(MONITOR_METHOD, |message: MonitorMessage| async move {
         handle_message(&message)
     })
     .expect("Failed to register signalling function");
