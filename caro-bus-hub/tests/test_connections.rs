@@ -22,10 +22,10 @@ async fn start_hub(socket_path: &str, service_files_dir: &str) -> Sender<()> {
         service_files_dir: service_files_dir.into(),
     };
 
-    let _ = pretty_env_logger::formatted_builder()
-        .is_test(true)
-        .filter_level(args.log_level)
-        .try_init();
+    // let _ = pretty_env_logger::formatted_builder()
+    //     .filter_level(args.log_level)
+    //     .try_init();
+
     let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
     tokio::spawn(async move {
@@ -52,6 +52,7 @@ async fn write_service_file(service_dir: &Path, service_name: &str, content: Jso
     file.write_all(json::stringify(content).as_bytes())
         .await
         .expect("Failed to write service file content");
+    file.flush().await.expect("Failed to flush service file");
 }
 
 #[tokio::test(flavor = "multi_thread")]

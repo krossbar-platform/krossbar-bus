@@ -327,6 +327,7 @@ impl Peer {
                             MessageBody::Response(Response::Signal(value)) => {
                                 match bson::from_bson::<T>(value.clone()) {
                                     Ok(value) => {
+                                        trace!("Signal response");
                                         // Call back
                                         callback(value).await;
                                     }
@@ -341,8 +342,9 @@ impl Peer {
                             MessageBody::Response(Response::StateChanged(value)) => {
                                 match bson::from_bson::<T>(value.clone()) {
                                     Ok(value) => {
+                                        trace!("State change");
                                         // Call back
-                                        callback(value);
+                                        callback(value).await;
                                     }
                                     Err(err) => {
                                         error!(

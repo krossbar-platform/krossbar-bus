@@ -6,7 +6,7 @@ use caro_bus_lib::Bus;
 #[tokio::main]
 async fn main() {
     pretty_env_logger::formatted_builder()
-        .filter_level(LevelFilter::Debug)
+        .filter_level(LevelFilter::Trace)
         .init();
 
     let mut bus = Bus::register("com.examples.watch_state").await.unwrap();
