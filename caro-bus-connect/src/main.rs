@@ -1,7 +1,3 @@
-// Waiting until Github updates rustc
-#![allow(stable_features)]
-#![feature(stdin_forwarders)]
-
 use std::{
     io::{self, Write},
     str::FromStr,
