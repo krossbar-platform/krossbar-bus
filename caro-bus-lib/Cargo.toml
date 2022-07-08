@@ -3,8 +3,6 @@ name = "caro-bus-lib"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 async-trait = "0.1"
 async-recursion = "1.0.0"
@@ -17,6 +15,7 @@ tokio-send-fd = "0.9"
 serde = "1.0"
 
 caro-bus-common = { path = "../caro-bus-common" }
+caro-macros = { path = "../caro-macros" }
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
