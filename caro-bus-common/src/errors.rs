@@ -14,7 +14,7 @@ pub enum Error {
     NameRegistered,
     #[error("Method, Signal, or State with a given name already registered")]
     AlreadyRegistered,
-    #[error("Method, Signal, or State not registered")]
+    #[error("Service, Method, Signal, or State not registered")]
     NotRegistered,
     #[error("Invalid protocol version. Please update Caro dependencies")]
     InvalidProtocol,
@@ -24,6 +24,8 @@ pub enum Error {
     InvalidResponse,
     #[error("Invalid message received. Internal error. Please fill bug report")]
     InvalidMessage,
+    #[error("Service not connected")]
+    NotConnected,
     #[error("Internal bus error. See logs for details. Please fill bug report")]
     Internal,
 }

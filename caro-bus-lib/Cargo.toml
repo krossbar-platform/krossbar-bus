@@ -8,9 +8,10 @@ async-trait = "0.1"
 async-recursion = "1.0.0"
 bson = "2.3"
 bytes = "1.1"
+lazy_static = "1.4"
+log = "0.4"
 # TODO: Limit fetures
 tokio = { version = "1.19", features = ["full"] }
-log = "0.4"
 tokio-send-fd = "0.9"
 serde = "1.0"
 
