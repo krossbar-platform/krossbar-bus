@@ -35,7 +35,7 @@ pub trait RegisterMethods: Send + Sync + Sized {
 
     async fn register_method<P, R, Ret>(
         method_name: &str,
-        context: SelfMethod<Self, P, Ret>,
+        context: SelfMethod<Self, P, R, Ret>,
     ) -> crate::Result<()>
     where
         P: DeserializeOwned + Send + 'static,
@@ -53,12 +53,17 @@ pub trait RegisterMethods: Send + Sync + Sized {
     }
 }
 
-pub struct SelfMethod<T: Send + Sync + 'static, P: 'static, R: 'static> {
+pub struct SelfMethod<
+    T: Send + Sync + 'static,
+    P: 'static,
+    R: 'static,
+    Ret: Future<Output = R> + 'static,
+> {
     pointer: *mut T,
-    method: &'static (dyn Fn(&mut T, P) -> R + Send + Sync),
+    method: &'static (dyn Fn(&mut T, P) -> Ret + Send + Sync),
 }
 
-impl<T: Send + Sync, P, R, Ret: Future<Output = R>> SelfMethod<T, P, Ret> {
+impl<T: Send + Sync, P, R, Ret: Future<Output = R>> SelfMethod<T, P, R, Ret> {
     pub async fn exec(&self, parameter: P) -> R {
         unsafe {
             let reference = self.pointer.as_mut().unwrap();
@@ -67,15 +72,15 @@ impl<T: Send + Sync, P, R, Ret: Future<Output = R>> SelfMethod<T, P, Ret> {
     }
 }
 
-impl<T: Send + Sync, P, R> Copy for SelfMethod<T, P, R> {}
-impl<T: Send + Sync, P, R> Clone for SelfMethod<T, P, R> {
+impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Copy for SelfMethod<T, P, R, Ret> {}
+impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Clone for SelfMethod<T, P, R, Ret> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-unsafe impl<T: Send + Sync, P, R> Send for SelfMethod<T, P, R> {}
-unsafe impl<T: Send + Sync, P, R> Sync for SelfMethod<T, P, R> {}
+unsafe impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Send for SelfMethod<T, P, R, Ret> {}
+unsafe impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Sync for SelfMethod<T, P, R, Ret> {}
 
 pub struct Signal<T: Serialize> {
     internal: Option<crate::signal::Signal<T>>,
