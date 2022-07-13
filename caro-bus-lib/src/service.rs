@@ -1,4 +1,4 @@
-use std::{future::Future, sync::Mutex};
+use std::{future::Future, pin::Pin, sync::Mutex};
 
 use async_trait::async_trait;
 use lazy_static::lazy_static;
@@ -33,18 +33,17 @@ pub trait MacroService {
 pub trait RegisterMethods: Send + Sync + Sized {
     async fn register_methods(&mut self) -> crate::Result<()>;
 
-    async fn register_method<P, R, Ret>(
+    fn register_method<P, R>(
         method_name: &str,
-        context: SelfMethod<Self, P, R, Ret>,
+        callback: impl FnMut(P) -> Pin<Box<dyn Future<Output = R> + Send>> + Send + Sync + 'static,
     ) -> crate::Result<()>
     where
         P: DeserializeOwned + Send + 'static,
         R: Serialize + Send + 'static,
-        Ret: Future<Output = R> + Send + 'static,
     {
         match *SERVICE_BUS.lock().unwrap() {
             Some(ref mut bus) => {
-                bus.register_method(method_name, move |p| async move { context.exec(p).await })?;
+                bus.register_method::<P, R>(method_name, callback)?;
             }
             _ => return Err(Box::new(BusError::NotRegistered)),
         }
@@ -53,34 +52,25 @@ pub trait RegisterMethods: Send + Sync + Sized {
     }
 }
 
-pub struct SelfMethod<
-    T: Send + Sync + 'static,
-    P: 'static,
-    R: 'static,
-    Ret: Future<Output = R> + 'static,
-> {
-    pointer: *mut T,
-    method: &'static (dyn Fn(&mut T, P) -> Ret + Send + Sync),
+pub struct SelfMethod<T: Send + Sync + 'static> {
+    pub pointer: *mut T,
 }
 
-impl<T: Send + Sync, P, R, Ret: Future<Output = R>> SelfMethod<T, P, R, Ret> {
-    pub async fn exec(&self, parameter: P) -> R {
-        unsafe {
-            let reference = self.pointer.as_mut().unwrap();
-            (self.method)(reference, parameter).await
-        }
+impl<T: Send + Sync> SelfMethod<T> {
+    pub fn get(&self) -> &mut T {
+        unsafe { self.pointer.as_mut().unwrap() }
     }
 }
 
-impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Copy for SelfMethod<T, P, R, Ret> {}
-impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Clone for SelfMethod<T, P, R, Ret> {
+impl<T: Send + Sync> Copy for SelfMethod<T> {}
+impl<T: Send + Sync> Clone for SelfMethod<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-unsafe impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Send for SelfMethod<T, P, R, Ret> {}
-unsafe impl<T: Send + Sync, P, R, Ret: Future<Output = R>> Sync for SelfMethod<T, P, R, Ret> {}
+unsafe impl<T: Send + Sync> Send for SelfMethod<T> {}
+unsafe impl<T: Send + Sync> Sync for SelfMethod<T> {}
 
 pub struct Signal<T: Serialize> {
     internal: Option<crate::signal::Signal<T>>,

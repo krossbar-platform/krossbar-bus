@@ -5,6 +5,7 @@ use std::{
         net::UnixStream as OsStream,
         prelude::{FromRawFd, RawFd},
     },
+    pin::Pin,
     sync::{Arc, RwLock},
 };
 
@@ -203,15 +204,14 @@ impl Bus {
     /// and responses.\
     /// **P** is paramtere type. Should be a deserializable structure\
     /// **R** is method return type. Should be a serializable structure
-    pub fn register_method<P, R, Ret>(
+    pub fn register_method<P, R>(
         &mut self,
         method_name: &str,
-        mut callback: impl FnMut(P) -> Ret + Send + Sync + 'static,
+        mut callback: impl FnMut(P) -> Pin<Box<dyn Future<Output = R> + Send>> + Send + Sync + 'static,
     ) -> crate::Result<()>
     where
         P: DeserializeOwned + Send + 'static,
         R: Serialize + Send + 'static,
-        Ret: Future<Output = R> + Send,
     {
         let method_name = method_name.into();
         let mut rx = self.update_method_map(&method_name)?;

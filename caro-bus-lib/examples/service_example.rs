@@ -35,12 +35,11 @@ impl MacroService for Service {
 #[async_trait]
 impl RegisterMethods for Service {
     async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
-        let context = SelfMethod {
-            pointer: self,
-            method: &Service::hello_method,
-        };
+        let context = SelfMethod { pointer: self };
 
-        RegisterMethods::register_method("method", context).await?;
+        Self::register_method("method", move |p| {
+            Box::pin(async move { context.get().hello_method(p).await })
+        })?;
         Ok(())
     }
 }
