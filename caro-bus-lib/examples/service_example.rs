@@ -11,15 +11,12 @@ struct Service {
 }
 
 impl Service {
-    pub async fn new() -> caro_bus_lib::Result<Self> {
-        let mut this = Self {
+    pub fn new() -> Self {
+        Self {
             signal: Signal::new(),
             state: State::new(),
             counter: 0,
-        };
-
-        this.register_service().await?;
-        Ok(this)
+        }
     }
 
     async fn hello_method(&mut self, value: i32) -> String {
@@ -56,7 +53,10 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut service = Service::new().await.unwrap();
+    let mut service = Box::pin(Service::new());
+
+    service.register_service().await.unwrap();
+    service.register_methods().await.unwrap();
 
     loop {
         service.signal.emit("Hello".into());
