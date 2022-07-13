@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{pin::Pin, time::Duration};
 
 use async_trait::async_trait;
 use caro_bus_lib::service::*;
@@ -36,7 +36,7 @@ impl MacroService for Service {
 }
 
 #[async_trait]
-impl RegisterMethods for Service {
+impl RegisterMethods for Pin<Box<Service>> {
     async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
         let context = SelfMethod { pointer: self };
 
