@@ -5,8 +5,9 @@ use caro_bus_lib::service::*;
 use log::LevelFilter;
 
 struct Service {
-    pub signal: Signal<String>,
-    pub state: State<i32>,
+    signal: Signal<String>,
+    state: State<i32>,
+    counter: i32,
 }
 
 impl Service {
@@ -14,6 +15,7 @@ impl Service {
         let mut this = Self {
             signal: Signal::new(),
             state: State::new(),
+            counter: 0,
         };
 
         this.register_service().await?;
@@ -21,7 +23,8 @@ impl Service {
     }
 
     async fn hello_method(&mut self, value: i32) -> String {
-        format!("Hello, {}", value)
+        self.counter += 1;
+        format!("Hello, {}", value + self.counter)
     }
 }
 

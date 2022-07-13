@@ -35,7 +35,7 @@ pub trait RegisterMethods: Send + Sync + Sized {
 
     fn register_method<P, R, Ret>(
         method_name: &str,
-        callback: impl FnMut(P) -> Ret + Send + Sync + 'static,
+        callback: impl Fn(P) -> Ret + Send + Sync + 'static,
     ) -> crate::Result<()>
     where
         P: DeserializeOwned + Send + 'static,
