@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Mutex};
+use std::{future::Future, sync::Mutex};
 
 use async_trait::async_trait;
 use lazy_static::lazy_static;
@@ -33,19 +33,20 @@ pub trait MacroService {
 pub trait RegisterMethods: Send + Sync + Sized {
     async fn register_methods(&mut self) -> crate::Result<()>;
 
-    fn register_method<P, R>(
+    fn register_method<P, R, Ret>(
         method_name: &str,
-        callback: impl FnMut(P) -> Pin<Box<dyn Future<Output = R> + Send>> + Send + Sync + 'static,
+        callback: impl FnMut(P) -> Ret + Send + Sync + 'static,
     ) -> crate::Result<()>
     where
         P: DeserializeOwned + Send + 'static,
         R: Serialize + Send + 'static,
+        Ret: Future<Output = R> + Send,
     {
         match *SERVICE_BUS.lock().unwrap() {
             Some(ref mut bus) => {
-                bus.register_method::<P, R>(method_name, callback)?;
+                bus.register_method::<P, R, Ret>(method_name, callback)?;
             }
-            _ => return Err(Box::new(BusError::NotRegistered)),
+            _ => panic!("Not registered"),
         }
 
         Ok(())
@@ -88,16 +89,16 @@ impl<T: Serialize + 'static> Signal<T> {
 
         match *SERVICE_BUS.lock().unwrap() {
             Some(ref mut bus) => self.internal = Some(bus.register_signal(signal_name)?),
-            _ => return Err(Box::new(BusError::NotRegistered)),
+            _ => panic!("Not registered"),
         }
 
         Ok(())
     }
 
-    pub fn emit(&self, value: T) -> crate::Result<()> {
+    pub fn emit(&self, value: T) {
         match self.internal {
-            None => Err(Box::new(BusError::NotRegistered)),
-            Some(ref internal) => Ok(internal.emit(value)),
+            None => panic!("Not registered"),
+            Some(ref internal) => internal.emit(value),
         }
     }
 }
@@ -120,23 +121,23 @@ impl<T: Serialize + 'static> State<T> {
             Some(ref mut bus) => {
                 self.internal = Some(bus.register_state(state_name, initial_value)?)
             }
-            _ => return Err(Box::new(BusError::NotRegistered)),
+            _ => panic!("Not registered"),
         }
 
         Ok(())
     }
 
-    pub fn set(&mut self, value: T) -> crate::Result<()> {
+    pub fn set(&mut self, value: T) {
         match self.internal {
-            None => Err(Box::new(BusError::NotRegistered)),
-            Some(ref mut internal) => Ok(internal.set(value)),
+            None => panic!("Not registered"),
+            Some(ref mut internal) => internal.set(value),
         }
     }
 
-    pub fn get(&self) -> crate::Result<&T> {
+    pub fn get(&self) -> &T {
         match self.internal {
-            None => Err(Box::new(BusError::NotRegistered)),
-            Some(ref internal) => Ok(internal.get()),
+            None => panic!("Not registered"),
+            Some(ref internal) => internal.get(),
         }
     }
 }

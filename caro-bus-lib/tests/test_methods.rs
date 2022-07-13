@@ -94,10 +94,8 @@ async fn test_methods() {
         .await
         .expect("Failed to register service");
 
-    bus1.register_method("method", |value: i32| {
-        Box::pin(async move {
-            return format!("Hello, {}", value);
-        })
+    bus1.register_method("method", |value: i32| async move {
+        return format!("Hello, {}", value);
     })
     .expect("Failed to register method");
 

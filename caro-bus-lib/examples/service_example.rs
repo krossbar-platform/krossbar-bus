@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use caro_bus_lib::service::*;
+use log::LevelFilter;
 
 struct Service {
     pub signal: Signal<String>,
@@ -25,7 +28,7 @@ impl Service {
 #[async_trait]
 impl MacroService for Service {
     async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
-        Self::register_bus("caro.service.example").await?;
+        Self::register_bus("com.examples.register_state").await?;
         self.signal.register("signal")?;
         self.state.register("state", 0)?;
         Ok(())
@@ -37,8 +40,8 @@ impl RegisterMethods for Service {
     async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
         let context = SelfMethod { pointer: self };
 
-        Self::register_method("method", move |p| {
-            Box::pin(async move { context.get().hello_method(p).await })
+        Self::register_method("method", move |p| async move {
+            context.get().hello_method(p).await
         })?;
         Ok(())
     }
@@ -46,7 +49,15 @@ impl RegisterMethods for Service {
 
 #[tokio::main]
 async fn main() {
+    pretty_env_logger::formatted_builder()
+        .filter_level(LevelFilter::Trace)
+        .init();
+
     let mut service = Service::new().await.unwrap();
-    service.signal.emit("Hello".into()).unwrap();
-    service.state.set(42).unwrap();
+
+    loop {
+        service.signal.emit("Hello".into());
+        service.state.set(42);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }

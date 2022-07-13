@@ -84,8 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("Failed to register monitor");
 
-    bus.register_method(MONITOR_METHOD, |message: MonitorMessage| {
-        Box::pin(async move { handle_message(&message) })
+    bus.register_method(MONITOR_METHOD, |message: MonitorMessage| async move {
+        handle_message(&message)
     })
     .expect("Failed to register signalling function");
 
