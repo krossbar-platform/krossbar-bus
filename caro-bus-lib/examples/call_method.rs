@@ -11,7 +11,7 @@ async fn main() {
 
     let mut bus = Bus::register("com.examples.call_method").await.unwrap();
 
-    let mut peer_connection = bus
+    let peer_connection = bus
         .connect("com.examples.register_method".into())
         .await
         .unwrap();

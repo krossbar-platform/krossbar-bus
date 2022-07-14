@@ -117,7 +117,7 @@ async fn test_methods() {
         .await
         .expect("Failed to register service");
 
-    let mut peer = bus2
+    let peer = bus2
         .connect(register_service_name)
         .await
         .expect("Failed to connect to the target service");

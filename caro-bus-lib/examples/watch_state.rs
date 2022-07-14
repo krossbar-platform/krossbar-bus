@@ -11,7 +11,7 @@ async fn main() {
 
     let mut bus = Bus::register("com.examples.watch_state").await.unwrap();
 
-    let mut peer_connection = bus.connect("com.examples.register_state").await.unwrap();
+    let peer_connection = bus.connect("com.examples.register_state").await.unwrap();
 
     let current_state = peer_connection
         .watch("state", |value: i32| async move {

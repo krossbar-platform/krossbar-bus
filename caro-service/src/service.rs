@@ -1,8 +1,9 @@
-use std::{future::Future, sync::Mutex};
+use std::future::Future;
 
 use async_trait::async_trait;
 use lazy_static::lazy_static;
 use serde::{de::DeserializeOwned, Serialize};
+use tokio::sync::Mutex;
 
 use caro_bus_lib::{Bus, Result as BusResult};
 
@@ -15,7 +16,7 @@ pub trait Service {
     async fn register_bus(service_name: &str) -> BusResult<()> {
         let bus = Bus::register(service_name).await?;
 
-        *SERVICE_BUS.lock().unwrap() = Some(bus);
+        *SERVICE_BUS.lock().await = Some(bus);
 
         Ok(())
     }
@@ -25,9 +26,9 @@ pub trait Service {
 
 #[async_trait]
 pub trait ServiceMethods: Send + Sync + Sized {
-    async fn register_methods(&mut self) -> BusResult<()>;
+    async fn register(&mut self) -> BusResult<()>;
 
-    fn register_method<P, R, Ret>(
+    async fn register_method<P, R, Ret>(
         method_name: &str,
         callback: impl Fn(P) -> Ret + Send + Sync + 'static,
     ) -> BusResult<()>
@@ -36,7 +37,7 @@ pub trait ServiceMethods: Send + Sync + Sized {
         R: Serialize + Send + 'static,
         Ret: Future<Output = R> + Send,
     {
-        match *SERVICE_BUS.lock().unwrap() {
+        match *SERVICE_BUS.lock().await {
             Some(ref mut bus) => {
                 bus.register_method::<P, R, Ret>(method_name, callback)?;
             }

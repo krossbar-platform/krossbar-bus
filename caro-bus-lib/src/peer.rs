@@ -146,7 +146,7 @@ impl Peer {
     /// **P** is an argument type. Should be a serializable structure.\
     /// **R** is return type. Should be a deserializable structure
     pub async fn call<P: Serialize, R: DeserializeOwned>(
-        &mut self,
+        &self,
         method_name: &str,
         params: &P,
     ) -> crate::Result<R> {
@@ -198,7 +198,7 @@ impl Peer {
     /// Remote signal subscription\
     /// **T** is the signal type. Should be a deserializable structure
     pub async fn subscribe<T, Ret>(
-        &mut self,
+        &self,
         signal_name: &str,
         callback: impl Fn(T) -> Ret + Send + Sync + 'static,
     ) -> crate::Result<()>
@@ -234,7 +234,7 @@ impl Peer {
     /// **T** is the signal type. Should be a deserializable structure\
     /// **Returns** current state value
     pub async fn watch<T, Ret>(
-        &mut self,
+        &self,
         state_name: &str,
         callback: impl Fn(T) -> Ret + Send + Sync + 'static,
     ) -> crate::Result<T>
@@ -275,7 +275,7 @@ impl Peer {
     /// Make subscription call and get result
     /// Used for both: signals and states
     async fn make_subscription_call(
-        &mut self,
+        &self,
         message: Message,
         signal_name: &str,
     ) -> Result<(Message, Receiver<Message>), Box<dyn Error + Sync + Send>> {
