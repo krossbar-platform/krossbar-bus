@@ -7,4 +7,5 @@ members = [
     "caro-bus-monitor",
     "caro-bus-lib",
     "caro-macros",
+    "caro-service",
 ]

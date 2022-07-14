@@ -1,16 +1,20 @@
 use std::{pin::Pin, time::Duration};
 
 use async_trait::async_trait;
-use caro_bus_lib::service::*;
+use caro_service::{
+    service::{Service, ServiceMethods},
+    signal::Signal,
+    state::State,
+};
 use log::LevelFilter;
 
-struct Service {
+struct ServiceExample {
     signal: Signal<String>,
     state: State<i32>,
     counter: i32,
 }
 
-impl Service {
+impl ServiceExample {
     pub fn new() -> Self {
         Self {
             signal: Signal::new(),
@@ -26,7 +30,7 @@ impl Service {
 }
 
 #[async_trait]
-impl MacroService for Service {
+impl Service for ServiceExample {
     async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
         Self::register_bus("com.examples.register_state").await?;
         self.signal.register("signal")?;
@@ -36,9 +40,9 @@ impl MacroService for Service {
 }
 
 #[async_trait]
-impl RegisterMethods for Pin<Box<Service>> {
+impl ServiceMethods for Pin<Box<ServiceExample>> {
     async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
-        let context = SelfMethod { pointer: self };
+        let context = caro_service::this::This { pointer: self };
 
         Self::register_method("method", move |p| async move {
             context.get().hello_method(p).await
@@ -53,7 +57,7 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut service = Box::pin(Service::new());
+    let mut service = Box::pin(ServiceExample::new());
 
     service.register_service().await.unwrap();
     service.register_methods().await.unwrap();
