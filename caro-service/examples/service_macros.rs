@@ -1,19 +1,21 @@
 use std::time::Duration;
 
+use caro_service::Service as CaroService;
 use log::LevelFilter;
 
 use async_trait::async_trait;
 use caro_macros::Service;
 use caro_service::Signal;
+use caro_service::State;
 
 #[derive(Service)]
-#[service_name("caro.service.example")]
+#[service_name("com.examples.service")]
 struct ServiceExample {
     //peer: Pin<Box<PeerExample>>,
     #[signal]
-    _signal: Signal<String>,
-    // #[state]
-    // state: State<i32>,
+    signal: Signal<String>,
+    #[state(0)]
+    state: State<i32>,
     // counter: i32,
 }
 
@@ -21,8 +23,8 @@ impl ServiceExample {
     pub fn new() -> Self {
         Self {
             //peer: Box::pin(PeerExample::new()),
-            _signal: Signal::new(),
-            // state: State::new(),
+            signal: Signal::new(),
+            state: State::new(),
             // counter: 0,
         }
     }
@@ -39,14 +41,14 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut _service = Box::pin(ServiceExample::new());
+    let mut service = ServiceExample::new();
 
-    //service.register_service().await.unwrap();
+    service.register_service().await.unwrap();
     //service.register().await.unwrap();
 
     loop {
-        //service.signal.emit("Hello".into());
-        //service.state.set(42);
+        service.signal.emit("Hello".into());
+        service.state.set(42);
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
