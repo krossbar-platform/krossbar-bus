@@ -11,6 +11,7 @@ tokio = { version = "1.19", features = ["sync"] }
 
 caro-bus-lib = { path = "../caro-bus-lib" }
 caro-bus-common = { path = "../caro-bus-common" }
+caro-macros = { path = "../caro-macros" }
 
 [dev-dependencies]
 log = "0.4"
