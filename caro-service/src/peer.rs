@@ -59,7 +59,7 @@ pub trait PeerSignalsAndStates {
 
         match maybe_peer {
             Some(peer) => {
-                peer.subscribe::<T, Ret>(signal_name, callback).await?;
+                peer.subscribe(signal_name, callback).await?;
             }
             _ => panic!("Not registered"),
         }
@@ -84,7 +84,7 @@ pub trait PeerSignalsAndStates {
 
         match maybe_peer {
             Some(peer) => {
-                return Ok(peer.watch::<T, Ret>(state_name, callback).await?);
+                return Ok(peer.watch(state_name, callback).await?);
             }
             _ => panic!("Not registered"),
         }

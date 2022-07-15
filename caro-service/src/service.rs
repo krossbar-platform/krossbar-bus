@@ -39,7 +39,7 @@ pub trait ServiceMethods: Send + Sync + Sized {
     {
         match *SERVICE_BUS.lock().await {
             Some(ref mut bus) => {
-                bus.register_method::<P, R, Ret>(method_name, callback)?;
+                bus.register_method(method_name, callback)?;
             }
             _ => panic!("Not registered"),
         }
