@@ -1,5 +1,10 @@
 use quote::{quote, ToTokens};
-use syn::{self, LitStr};
+use syn::{self, spanned::Spanned};
+
+#[derive(Default)]
+pub(crate) struct Features {
+    pub methods: bool,
+}
 
 pub(crate) fn parse_signals(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenStream> {
     let mut result = vec![];
@@ -48,27 +53,126 @@ pub(crate) fn parse_states(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenS
     result
 }
 
-pub(crate) fn parse_service_name(attribute: &syn::Attribute) -> LitStr {
-    match attribute.path.get_ident() {
-        Some(ident) => {
-            if ident != "service_name" {
-                panic!("Invalid service name attribute. Should be a single `service_name` attribute with a service name. E.g. #[service_name(\"com.test.service\")]. Got: '{}'", ident);
-            }
+fn parse_features(exp: &syn::Expr) -> Features {
+    let mut result = Features::default();
 
-            let exp = match syn::parse2::<syn::ExprParen>(attribute.tokens.clone()) {
-                Ok(exp) => exp,
-                Err(err) => {
-                    panic!("Invalid service name attribute. Should be a parenthesized single `service_name` attribute with a service name. E.g. #[service_name(\"com.test.service\")]. Got: '{}'. Err: {}", attribute.tokens, err.to_string())
+    if let syn::Expr::Array(syn::ExprArray {
+        attrs: _,
+        bracket_token: _,
+        elems,
+    }) = exp
+    {
+        for elem in elems {
+            if let syn::Expr::Lit(syn::ExprLit {
+                attrs: _,
+                lit: syn::Lit::Str(feature),
+            }) = elem
+            {
+                if &feature.value() == "methods" {
+                    result.methods = true
+                } else {
+                    panic!("Unknown service attribute: {}", feature.value())
                 }
-            };
-
-            match *exp.expr {
-                syn::Expr::Lit(syn::ExprLit{attrs: _, lit: syn::Lit::Str(name)}) => return name,
-                _ => panic!("Invalid service name attribute. Should be a single `service_name` attribute with a service name. E.g. #[service_name(\"com.test.service\")]. Got: '{}'", attribute.tokens)
+            } else {
+                panic!("Invalid features attribute. Should be a strings. E.g. #[service(name = \"com.test.service\", features = [\"methods\"])]. Got: {}", elem.to_token_stream().to_string());
             }
         }
+    } else {
+        panic!("Invalid features attribute. Should be and array of strings. E.g. #[service(name = \"com.test.service\", features = [\"methods\"])]. Got: {}", exp.to_token_stream().to_string());
+    }
+
+    result
+}
+
+fn parse_named_attributes(
+    elements: syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>,
+) -> (syn::LitStr, Features) {
+    let mut features = Features::default();
+    let mut name = syn::LitStr::new("", elements.span());
+
+    for expr in elements {
+        if let syn::Expr::Assign(syn::ExprAssign {
+            attrs: _,
+            eq_token: _,
+            left,
+            right,
+        }) = expr
+        {
+            if let syn::Expr::Path(syn::ExprPath {
+                attrs: _,
+                qself: _,
+                path,
+            }) = *left
+            {
+                if path.is_ident("name") {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        attrs: _,
+                        lit: syn::Lit::Str(lit_name),
+                    }) = *right
+                    {
+                        name = lit_name
+                    } else {
+                        panic!(
+                            "Invalid service name. Should be a string. E.g. #[service(name = \"com.test.service\")]. Got: {}",
+                            right.to_token_stream().to_string()
+                        )
+                    }
+                } else if path.is_ident("features") {
+                    features = parse_features(&*right);
+                } else {
+                    panic!(
+                        "Unknown service attribute: {}",
+                        path.to_token_stream().to_string()
+                    );
+                }
+            } else {
+                panic!("Invalid named service attribute. Should be attributes with a service name and optional features. E.g. #[service(name = \"com.test.service\", features = [])]");
+            }
+        } else {
+            panic!("Invalid named service attribute. Should be attributes with a service name and optional features. E.g. #[service(name = \"com.test.service\", features = [])]");
+        }
+    }
+
+    if &name.value() == "" {
+        panic!("Empty service name. Should be set by attributes with a service name and optional features. E.g. #[service(name = \"com.test.service\", features = [])]")
+    }
+
+    (name, features)
+}
+
+pub(crate) fn parse_name_and_features(attribute: &syn::Attribute) -> (syn::LitStr, Features) {
+    match attribute.path.get_ident() {
+        Some(ident) => {
+            if ident != "service" {
+                panic!("- Invalid service attribute. Should be a single `service` attribute with a service name and optional features. #[service(\"com.test.service\")] or #[service(name = \"com.test.service\", features = [])]. Got: '{}'", ident);
+            }
+
+            match syn::parse2::<syn::Expr>(attribute.tokens.clone()) {
+                Ok(syn::Expr::Paren(exp)) => match  *exp.expr {
+                    syn::Expr::Lit(syn::ExprLit{attrs: _, lit: syn::Lit::Str(name)}) => {
+                        return (name, Features::default())
+                    },
+                    syn::Expr::Assign(e) => {
+                        // Just create a tuple struct here and parse with external function
+                        let mut name_attrs = syn::punctuated::Punctuated::new();
+                        name_attrs.push(syn::Expr::Assign(e));
+                        return parse_named_attributes(name_attrs);
+                    }
+                    e => panic!("-- Invalid service attribute. Should be a single `service` attribute with a service name and optional features. #[service(\"com.test.service\")] or #[service(name = \"com.test.service\", features = [])]. Got: '{:?}'", e)
+                },
+                Ok(syn::Expr::Tuple(syn::ExprTuple { attrs: _, paren_token: _, elems })) => {
+                    return parse_named_attributes(elems);
+                }
+                Ok(e) => {
+                    panic!("--- Invalid service attribute. Should be a single `service` attribute with a service name and optional features. #[service(\"com.test.service\")] or #[service(name = \"com.test.service\", features = [])]. Got: '{:?}'", e)
+                }
+                Err(err) => {
+                    panic!("---- Invalid service attribute. Should be a single `service` attribute with a service name and optional features. #[service(\"com.test.service\")] or #[service(name = \"com.test.service\", features = [])]. Got: '{}'. Err: {}", attribute.tokens, err.to_string())
+                }
+            };
+        }
         _ => {
-            panic!("Invalid service name attribute. Should be a single `service_name` attribute with a service name. E.g. #[service_name(\"com.test.service\")]");
+            panic!("----- Invalid service attribute. Should be a single `service` attribute with a service name and optional features. #[service(\"com.test.service\")] or #[service(name = \"com.test.service\", features = [])]");
         }
     }
 }

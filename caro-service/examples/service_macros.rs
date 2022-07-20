@@ -9,7 +9,8 @@ use caro_service::Signal;
 use caro_service::State;
 
 #[derive(Service)]
-#[service_name("com.examples.service")]
+//#[service("com.examples.service")]
+#[service(name = "com.examples.service", features=["methods"])]
 struct ServiceExample {
     //peer: Pin<Box<PeerExample>>,
     #[signal]
@@ -46,7 +47,6 @@ async fn main() {
     let mut service = Box::pin(ServiceExample::new());
 
     service.register_service().await.unwrap();
-    service.register_methods().await.unwrap();
 
     loop {
         service.signal.emit("Hello".into());

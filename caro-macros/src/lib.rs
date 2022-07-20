@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{self, DeriveInput};
 
-#[proc_macro_derive(Service, attributes(service_name, signal, state, peer))]
+#[proc_macro_derive(Service, attributes(service, signal, state, peer))]
 pub fn service(input: TokenStream) -> TokenStream {
     let service_struct: DeriveInput = syn::parse(input).unwrap();
 
@@ -21,24 +21,44 @@ pub fn service(input: TokenStream) -> TokenStream {
         panic!("Invalid service name attribute. Should be a single `service_name` attribute with a service name. E.g. #[service_name(\"com.test.service\")]");
     }
 
-    let service_name = service::parse_service_name(&service_struct.attrs[0]);
     let struct_ident = &service_struct.ident;
+    let (service_name, features) = service::parse_name_and_features(&service_struct.attrs[0]);
 
     let signals = service::parse_signals(&struct_fields);
     let states = service::parse_states(&struct_fields);
 
-    quote! {
-        #[async_trait]
-        impl caro_service::Service for #struct_ident {
-            async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
-                Self::register_bus(#service_name).await?;
+    if features.methods {
+        quote! {
+            #[async_trait]
+            impl caro_service::Service for Pin<Box<#struct_ident>>
+                where Self: caro_service::service::ServiceMethods {
+                async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
+                    Self::register_bus(#service_name).await?;
+                    self.register_methods().await?;
 
-                //self.peer.register().await?;
-                //self.peer.register_callbacks().await?;
+                    //self.peer.register().await?;
+                    //self.peer.register_callbacks().await?;
 
-                #(#signals);*
-                #(#states);*
-                Ok(())
+                    #(#signals);*
+                    #(#states);*
+                    Ok(())
+                }
+            }
+        }
+    } else {
+        quote! {
+            #[async_trait]
+            impl caro_service::Service for #struct_ident {
+                async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
+                    Self::register_bus(#service_name).await?;
+
+                    //self.peer.register().await?;
+                    //self.peer.register_callbacks().await?;
+
+                    #(#signals);*
+                    #(#states);*
+                    Ok(())
+                }
             }
         }
     }
