@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::{pin::Pin, time::Duration};
 
-use caro_service::Service as CaroService;
+use caro_service::{service::ServiceMethods, Service as CaroService};
 use log::LevelFilter;
 
 use async_trait::async_trait;
-use caro_macros::Service;
+use caro_macros::{method, service_impl, Service};
 use caro_service::Signal;
 use caro_service::State;
 
@@ -16,23 +16,25 @@ struct ServiceExample {
     signal: Signal<String>,
     #[state(0)]
     state: State<i32>,
-    // counter: i32,
+    counter: i32,
 }
 
+#[service_impl]
 impl ServiceExample {
     pub fn new() -> Self {
         Self {
             //peer: Box::pin(PeerExample::new()),
             signal: Signal::new(),
             state: State::new(),
-            // counter: 0,
+            counter: 0,
         }
     }
 
-    // async fn hello_method(&mut self, value: i32) -> String {
-    //     self.counter += 1;
-    //     format!("Hello, {}", value + self.counter)
-    // }
+    #[method]
+    async fn hello_method(&mut self, value: i32) -> String {
+        self.counter += 1;
+        format!("Hello, {}", value + self.counter)
+    }
 }
 
 #[tokio::main]
@@ -41,10 +43,10 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut service = ServiceExample::new();
+    let mut service = Box::pin(ServiceExample::new());
 
     service.register_service().await.unwrap();
-    //service.register().await.unwrap();
+    service.register_methods().await.unwrap();
 
     loop {
         service.signal.emit("Hello".into());

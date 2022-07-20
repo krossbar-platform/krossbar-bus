@@ -1,4 +1,4 @@
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{self, LitStr};
 
 pub(crate) fn parse_signals(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenStream> {
@@ -71,4 +71,50 @@ pub(crate) fn parse_service_name(attribute: &syn::Attribute) -> LitStr {
             panic!("Invalid service name attribute. Should be a single `service_name` attribute with a service name. E.g. #[service_name(\"com.test.service\")]");
         }
     }
+}
+
+pub(crate) fn parse_impl_ident(impl_type: &syn::Type) -> syn::Ident {
+    let path = match impl_type {
+        syn::Type::Path(syn::TypePath { qself: _, path }) => path,
+        _ => panic!("Failed to parse service methods. Unexpected impl struct"),
+    };
+
+    path.get_ident().cloned().unwrap()
+}
+
+fn check_method_params(params: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>) {
+    if params.len() != 2 {
+        panic!("Invalid service method signature. Should be a single-argument method. E.g 'async fn hello(&mut self, param: String) -> i32. Got: {}", params.to_token_stream().to_string());
+    }
+
+    if !matches!(params.first().unwrap(), syn::FnArg::Receiver(_)) {
+        panic!("Invalid first service method argument. Should be '&self'");
+    }
+}
+
+pub(crate) fn parse_methods(methods: &Vec<syn::ImplItem>) -> Vec<proc_macro2::TokenStream> {
+    let mut result = vec![];
+
+    for item in methods {
+        if let syn::ImplItem::Method(method) = item {
+            for attr in &method.attrs {
+                if attr.path.is_ident("method") {
+                    check_method_params(&method.sig.inputs);
+
+                    let method_ident = &method.sig.ident;
+                    let method_name =
+                        syn::LitStr::new(&method_ident.to_string(), method_ident.span());
+
+                    result.push(quote! {
+                        Self::register_method(#method_name, move |p| async move {
+                                context.get().#method_ident(p).await
+                            })
+                            .await?;
+                    })
+                }
+            }
+        }
+    }
+
+    result
 }

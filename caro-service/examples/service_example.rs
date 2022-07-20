@@ -100,7 +100,7 @@ impl Service for ServiceExample {
 
 #[async_trait]
 impl ServiceMethods for Pin<Box<ServiceExample>> {
-    async fn register(&mut self) -> caro_bus_lib::Result<()> {
+    async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
         let context = caro_service::this::This { pointer: self };
 
         Self::register_method("method", move |p| async move {
@@ -120,7 +120,7 @@ async fn main() {
     let mut service = Box::pin(ServiceExample::new());
 
     service.register_service().await.unwrap();
-    service.register().await.unwrap();
+    service.register_methods().await.unwrap();
 
     loop {
         service.signal.emit("Hello".into());

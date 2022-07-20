@@ -26,7 +26,7 @@ pub trait Service {
 
 #[async_trait]
 pub trait ServiceMethods: Send + Sync + Sized {
-    async fn register(&mut self) -> BusResult<()>;
+    async fn register_methods(&mut self) -> BusResult<()>;
 
     async fn register_method<P, R, Ret>(
         method_name: &str,

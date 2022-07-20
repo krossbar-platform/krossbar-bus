@@ -44,3 +44,31 @@ pub fn service(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+#[proc_macro_attribute]
+pub fn method(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn service_impl(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let imp: syn::ItemImpl = syn::parse(input.clone()).unwrap();
+
+    let self_name = service::parse_impl_ident(&imp.self_ty);
+    let methods = service::parse_methods(&imp.items);
+
+    quote! {
+        #imp
+
+        #[async_trait]
+        impl caro_service::service::ServiceMethods for Pin<Box<#self_name>> {
+            async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
+                let context = caro_service::this::This { pointer: self };
+
+                #(#methods);*
+                Ok(())
+            }
+        }
+    }
+    .into()
+}
