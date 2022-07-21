@@ -1,9 +1,11 @@
+mod peer;
 mod service;
 
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{self, DeriveInput};
 
+// --------------- SERVICE -------------------
 #[proc_macro_derive(Service, attributes(service, signal, state, peer))]
 pub fn service(input: TokenStream) -> TokenStream {
     let service_struct: DeriveInput = syn::parse(input).unwrap();
@@ -86,6 +88,93 @@ pub fn service_impl(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 let context = caro_service::this::This { pointer: self };
 
                 #(#methods);*
+                Ok(())
+            }
+        }
+    }
+    .into()
+}
+
+// --------------- PEER -------------------
+#[proc_macro_derive(Peer, attributes(peer, procedure))]
+pub fn peer(input: TokenStream) -> TokenStream {
+    let service_struct: DeriveInput = syn::parse(input).unwrap();
+
+    let struct_fields = match service_struct.data {
+        syn::Data::Struct(structure) => match structure.fields {
+            syn::Fields::Named(named) => named,
+            _ => unreachable!("Can't have unnamed fields in a struct"),
+        },
+        syn::Data::Enum(..) => panic!("Invalid 'Peer' usage. Expected struct, got enum"),
+        syn::Data::Union(..) => panic!("Invalid 'Peer' usage. Expected struct, got union"),
+    };
+
+    if service_struct.attrs.len() != 1 {
+        panic!("Invalid peer name attribute. Should be a single 'peer' attribute with a peer name. E.g. #[peer(\"com.test.peer\")]");
+    }
+
+    let struct_ident = &service_struct.ident;
+    let (service_name, features) = peer::parse_name_and_features(&service_struct.attrs[0]);
+
+    let procedures = peer::parse_procedures(&struct_fields);
+
+    if features.methods {
+        quote! {
+            #[async_trait]
+            impl caro_service::peer::Peer for Pin<Box<#struct_ident>> {
+                async fn register(&mut self) -> caro_bus_lib::Result<()> {
+                    let peer = Self::register_peer(#service_name).await?;
+
+                    #(#procedures);*
+                    Ok(())
+                }
+            }
+        }
+    } else {
+        quote! {
+            #[async_trait]
+            impl caro_service::peer::Peer for Pin<Box<#struct_ident>> {
+                async fn register(&mut self) -> caro_bus_lib::Result<()> {
+                    let peer = Self::register_peer(#service_name).await?;
+
+                    #(#procedures);*
+                    Ok(())
+                }
+            }
+        }
+    }
+    .into()
+}
+
+#[proc_macro_attribute]
+pub fn signal_subscription(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn state_subscription(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    input
+}
+
+#[proc_macro_attribute]
+pub fn peer_subscriptions(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let imp: syn::ItemImpl = syn::parse(input.clone()).unwrap();
+
+    let self_name = peer::parse_impl_ident(&imp.self_ty);
+    // let signals = peer::parse_signal_subscriptions(&imp.items);
+    // let states = peer::parse_state_watches(&imp.items);
+
+    quote! {
+        #imp
+
+        #[async_trait]
+        impl caro_service::peer::PeerSignalsAndStates for Pin<Box<#self_name>> {
+            async fn register_callbacks(&mut self) -> BusResult<()> {
+                let context = caro_service::this::This { pointer: self };
+
+                // #(#signals);*
+                // #(#states);*
+
                 Ok(())
             }
         }
