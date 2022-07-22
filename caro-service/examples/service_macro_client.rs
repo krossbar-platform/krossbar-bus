@@ -1,47 +1,62 @@
 use std::{pin::Pin, time::Duration};
 
-use caro_service::{service::ServiceMethods, Service as CaroService};
+use caro_service::{
+    peer::{PeerName, PeerSignalsAndStates},
+    service::ServiceMethods,
+    Peer as CaroPeer, Service as CaroService,
+};
 use log::LevelFilter;
 
 use async_trait::async_trait;
-use caro_macros::{method, service_impl, Service};
-use caro_service::Signal;
-use caro_service::State;
+use caro_macros::{method, peer_impl, service_impl, signal, state, Peer, Service};
+use caro_service::Method;
+
+#[derive(Peer)]
+#[peer(name = "com.examples.service", features=["subscriptions"])]
+struct PeerExample {
+    #[method]
+    pub hello_method: Method<i32, String>,
+}
+
+#[peer_impl]
+impl PeerExample {
+    pub fn new() -> Self {
+        Self {
+            hello_method: Method::new(),
+        }
+    }
+
+    #[signal]
+    async fn signal(&mut self, value: String) {
+        println!("Signal emitted: {}", value);
+    }
+
+    #[state]
+    async fn state(&mut self, value: i32) {
+        println!("State changed: {}", value);
+    }
+}
 
 #[derive(Service)]
-//#[service("com.examples.service")]
-#[service(name = "com.examples.service", features=["methods"])]
+#[service(name = "com.examples.client", features=["methods"])]
 struct ServiceExample {
-    //peer: Pin<Box<PeerExample>>,
-    #[signal]
-    signal: Signal<String>,
-    #[state(0)]
-    state: State<i32>,
-    counter: i32,
+    #[peer]
+    pub peer: Pin<Box<PeerExample>>,
 }
 
 #[service_impl]
 impl ServiceExample {
     pub fn new() -> Self {
         Self {
-            //peer: Box::pin(PeerExample::new()),
-            signal: Signal::new(),
-            state: State::new(),
-            counter: 0,
+            peer: Box::pin(PeerExample::new()),
         }
-    }
-
-    #[method]
-    async fn hello_method(&mut self, value: i32) -> String {
-        self.counter += 1;
-        format!("Hello, {}", value + self.counter)
     }
 }
 
 #[tokio::main]
 async fn main() {
     pretty_env_logger::formatted_builder()
-        .filter_level(LevelFilter::Trace)
+        .filter_level(LevelFilter::Warn)
         .init();
 
     let mut service = Box::pin(ServiceExample::new());
@@ -49,8 +64,10 @@ async fn main() {
     service.register_service().await.unwrap();
 
     loop {
-        service.signal.emit("Hello".into());
-        service.state.set(42);
+        println!(
+            "Method response: {}",
+            service.peer.hello_method.call(&42).await.unwrap()
+        );
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

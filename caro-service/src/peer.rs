@@ -14,6 +14,10 @@ lazy_static! {
         Mutex::new(HashMap::new());
 }
 
+pub trait PeerName {
+    fn peer_name() -> &'static str;
+}
+
 #[async_trait]
 pub trait Peer {
     async fn register(&mut self) -> caro_bus_lib::Result<()>;

@@ -3,15 +3,15 @@ use syn::{self, spanned::Spanned};
 
 #[derive(Default)]
 pub(crate) struct Features {
-    pub methods: bool,
+    pub subscriptions: bool,
 }
 
-pub(crate) fn parse_procedures(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenStream> {
+pub(crate) fn parse_remote_methods(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenStream> {
     let mut result = vec![];
 
     for field in fields.named.iter() {
         for attribute in field.attrs.iter() {
-            if attribute.path.is_ident("procedure") {
+            if attribute.path.is_ident("method") {
                 let procedure_field = field.ident.as_ref().unwrap();
                 let procedure_name =
                     syn::LitStr::new(&procedure_field.to_string(), procedure_field.span());
@@ -42,7 +42,7 @@ fn parse_features(exp: &syn::Expr) -> Features {
             }) = elem
             {
                 if &feature.value() == "subscriptions" {
-                    result.methods = true
+                    result.subscriptions = true
                 } else {
                     panic!("Unknown service attribute: {}", feature.value())
                 }
@@ -170,7 +170,6 @@ fn check_method_params(params: &syn::punctuated::Punctuated<syn::FnArg, syn::tok
 }
 
 pub(crate) fn parse_signal_subscriptions(
-    peer_name: syn::LitStr,
     methods: &Vec<syn::ImplItem>,
 ) -> Vec<proc_macro2::TokenStream> {
     let mut result = vec![];
@@ -178,7 +177,7 @@ pub(crate) fn parse_signal_subscriptions(
     for item in methods {
         if let syn::ImplItem::Method(method) = item {
             for attr in &method.attrs {
-                if attr.path.is_ident("signal_subscription") {
+                if attr.path.is_ident("signal") {
                     check_method_params(&method.sig.inputs);
 
                     let method_ident = &method.sig.ident;
@@ -186,7 +185,7 @@ pub(crate) fn parse_signal_subscriptions(
                         syn::LitStr::new(&method_ident.to_string(), method_ident.span());
 
                     result.push(quote! {
-                        Self::subscribe_on_signal(#peer_name, #method_name, move |p| async move {
+                        Self::subscribe_on_signal(Self::peer_name(), #method_name, move |p| async move {
                             context.get().#method_ident(p).await
                         })
                         .await?;
@@ -199,16 +198,13 @@ pub(crate) fn parse_signal_subscriptions(
     result
 }
 
-pub(crate) fn parse_state_watches(
-    peer_name: syn::LitStr,
-    methods: &Vec<syn::ImplItem>,
-) -> Vec<proc_macro2::TokenStream> {
+pub(crate) fn parse_state_watches(methods: &Vec<syn::ImplItem>) -> Vec<proc_macro2::TokenStream> {
     let mut result = vec![];
 
     for item in methods {
         if let syn::ImplItem::Method(method) = item {
             for attr in &method.attrs {
-                if attr.path.is_ident("state_subscription") {
+                if attr.path.is_ident("state") {
                     check_method_params(&method.sig.inputs);
 
                     let method_ident = &method.sig.ident;
@@ -216,7 +212,7 @@ pub(crate) fn parse_state_watches(
                         syn::LitStr::new(&method_ident.to_string(), method_ident.span());
 
                     result.push(quote! {
-                        let current_state = Self::watch_state(#peer_name, #method_name, move |p| async move {
+                        let current_state = Self::watch_state(Self::peer_name(), #method_name, move |p| async move {
                             context.get().#method_ident(p).await
                         })
                         .await?;

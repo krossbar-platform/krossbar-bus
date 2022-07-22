@@ -53,6 +53,24 @@ pub(crate) fn parse_states(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenS
     result
 }
 
+pub(crate) fn parse_peers(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenStream> {
+    let mut result = vec![];
+
+    for field in fields.named.iter() {
+        for attribute in field.attrs.iter() {
+            if attribute.path.is_ident("peer") {
+                let peer_field = field.ident.as_ref().unwrap();
+
+                result.push(quote! {
+                    self.#peer_field.register().await?;
+                })
+            }
+        }
+    }
+
+    result
+}
+
 fn parse_features(exp: &syn::Expr) -> Features {
     let mut result = Features::default();
 
