@@ -1,18 +1,8 @@
-use std::{
-    collections::HashMap,
-    future::Future,
-    sync::{Arc, Mutex},
-};
+use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use caro_bus_lib::{self, Result as BusResult};
-use lazy_static::lazy_static;
 use serde::de::DeserializeOwned;
-
-lazy_static! {
-    pub(crate) static ref PEERS_CONNECTIONS: Mutex<HashMap<String, Arc<caro_bus_lib::peer::Peer>>> =
-        Mutex::new(HashMap::new());
-}
 
 pub trait PeerName {
     fn peer_name() -> &'static str;
@@ -20,20 +10,24 @@ pub trait PeerName {
 
 #[async_trait]
 pub trait Peer {
-    async fn register(&mut self) -> caro_bus_lib::Result<()>;
+    async fn register(&mut self, service_name: &str) -> caro_bus_lib::Result<()>;
 
-    async fn register_peer(peer_name: &str) -> BusResult<Arc<caro_bus_lib::peer::Peer>> {
-        if PEERS_CONNECTIONS.lock().unwrap().contains_key(peer_name) {
-            panic!("Peer already registered")
-        }
+    async fn register_peer(
+        service_name: &str,
+        peer_name: &str,
+    ) -> BusResult<Arc<caro_bus_lib::peer::Peer>> {
+        match crate::service::SERVICE_HANDLES
+            .lock()
+            .await
+            .get_mut(service_name)
+        {
+            Some(crate::service::ServiceHandle { bus, connections }) => {
+                if connections.contains_key(peer_name) {
+                    panic!("Peer already registered")
+                }
 
-        match *crate::service::SERVICE_BUS.lock().await {
-            Some(ref mut bus) => {
                 let peer_internal = Arc::new(bus.connect_await(peer_name).await?);
-                PEERS_CONNECTIONS
-                    .lock()
-                    .unwrap()
-                    .insert(peer_name.into(), peer_internal.clone());
+                connections.insert(peer_name.into(), peer_internal.clone());
 
                 Ok(peer_internal)
             }
@@ -44,9 +38,10 @@ pub trait Peer {
 
 #[async_trait]
 pub trait PeerSignalsAndStates {
-    async fn register_callbacks(&mut self) -> BusResult<()>;
+    async fn register_callbacks(&mut self, service_name: &str) -> BusResult<()>;
 
     async fn subscribe_on_signal<T, Ret>(
+        service_name: &str,
         peer_name: &str,
         signal_name: &str,
         callback: impl Fn(T) -> Ret + Send + Sync + 'static,
@@ -55,10 +50,11 @@ pub trait PeerSignalsAndStates {
         T: DeserializeOwned + Send + 'static,
         Ret: Future<Output = ()> + Send,
     {
-        let maybe_peer = PEERS_CONNECTIONS
+        let maybe_peer = crate::service::SERVICE_HANDLES
             .lock()
-            .unwrap()
-            .get(peer_name.into())
+            .await
+            .get(service_name)
+            .and_then(|handle| handle.connections.get(peer_name.into()))
             .cloned();
 
         match maybe_peer {
@@ -72,6 +68,7 @@ pub trait PeerSignalsAndStates {
     }
 
     async fn watch_state<T, Ret>(
+        service_name: &str,
         peer_name: &str,
         state_name: &str,
         callback: impl Fn(T) -> Ret + Send + Sync + 'static,
@@ -80,10 +77,11 @@ pub trait PeerSignalsAndStates {
         T: DeserializeOwned + Send + 'static,
         Ret: Future<Output = ()> + Send,
     {
-        let maybe_peer = PEERS_CONNECTIONS
+        let maybe_peer = crate::service::SERVICE_HANDLES
             .lock()
-            .unwrap()
-            .get(peer_name.into())
+            .await
+            .get(service_name)
+            .and_then(|handle| handle.connections.get(peer_name.into()))
             .cloned();
 
         match maybe_peer {

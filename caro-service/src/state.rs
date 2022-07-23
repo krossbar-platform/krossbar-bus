@@ -12,14 +12,23 @@ impl<T: Serialize + 'static> State<T> {
         Self { internal: None }
     }
 
-    pub async fn register(&mut self, state_name: &str, initial_value: T) -> BusResult<()> {
+    pub async fn register(
+        &mut self,
+        service_name: &str,
+        state_name: &str,
+        initial_value: T,
+    ) -> BusResult<()> {
         if self.internal.is_some() {
             return Err(Box::new(BusError::AlreadyRegistered));
         }
 
-        match *crate::service::SERVICE_BUS.lock().await {
-            Some(ref mut bus) => {
-                self.internal = Some(bus.register_state(state_name, initial_value)?)
+        match crate::service::SERVICE_HANDLES
+            .lock()
+            .await
+            .get_mut(service_name)
+        {
+            Some(handle) => {
+                self.internal = Some(handle.bus.register_state(state_name, initial_value)?)
             }
             _ => panic!("Not registered"),
         }

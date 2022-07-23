@@ -185,7 +185,7 @@ pub(crate) fn parse_signal_subscriptions(
                         syn::LitStr::new(&method_ident.to_string(), method_ident.span());
 
                     result.push(quote! {
-                        Self::subscribe_on_signal(Self::peer_name(), #method_name, move |p| async move {
+                        Self::subscribe_on_signal(service_name, Self::peer_name(), #method_name, move |p| async move {
                             context.get().#method_ident(p).await
                         })
                         .await?;
@@ -212,7 +212,7 @@ pub(crate) fn parse_state_watches(methods: &Vec<syn::ImplItem>) -> Vec<proc_macr
                         syn::LitStr::new(&method_ident.to_string(), method_ident.span());
 
                     result.push(quote! {
-                        let current_state = Self::watch_state(Self::peer_name(), #method_name, move |p| async move {
+                        let current_state = Self::watch_state(service_name, Self::peer_name(), #method_name, move |p| async move {
                             context.get().#method_ident(p).await
                         })
                         .await?;

@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{collections::HashMap, future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use lazy_static::lazy_static;
@@ -7,28 +7,42 @@ use tokio::sync::Mutex;
 
 use caro_bus_lib::{Bus, Result as BusResult};
 
+pub(crate) struct ServiceHandle {
+    pub bus: Bus,
+    pub connections: HashMap<String, Arc<caro_bus_lib::peer::Peer>>,
+}
+
 lazy_static! {
-    pub(crate) static ref SERVICE_BUS: Mutex<Option<Bus>> = Mutex::new(None);
+    pub(crate) static ref SERVICE_HANDLES: Mutex<HashMap<String, ServiceHandle>> =
+        Mutex::new(HashMap::new());
 }
 
 #[async_trait]
 pub trait Service {
-    async fn register_bus(service_name: &str) -> BusResult<()> {
-        let bus = Bus::register(service_name).await?;
+    async fn register_bus() -> BusResult<()> {
+        let bus = Bus::register(Self::service_name()).await?;
 
-        *SERVICE_BUS.lock().await = Some(bus);
+        SERVICE_HANDLES.lock().await.insert(
+            Self::service_name().into(),
+            ServiceHandle {
+                bus,
+                connections: HashMap::new(),
+            },
+        );
 
         Ok(())
     }
 
+    fn service_name() -> &'static str;
     async fn register_service(&mut self) -> BusResult<()>;
 }
 
 #[async_trait]
 pub trait ServiceMethods: Send + Sync + Sized {
-    async fn register_methods(&mut self) -> BusResult<()>;
+    async fn register_methods(&mut self, service_name: &str) -> BusResult<()>;
 
     async fn register_method<P, R, Ret>(
+        service_name: &str,
         method_name: &str,
         callback: impl Fn(P) -> Ret + Send + Sync + 'static,
     ) -> BusResult<()>
@@ -37,8 +51,11 @@ pub trait ServiceMethods: Send + Sync + Sized {
         R: Serialize + Send + 'static,
         Ret: Future<Output = R> + Send,
     {
-        match *SERVICE_BUS.lock().await {
-            Some(ref mut bus) => {
+        match SERVICE_HANDLES.lock().await.get_mut(service_name) {
+            Some(ServiceHandle {
+                bus,
+                connections: _,
+            }) => {
                 bus.register_method(method_name, callback)?;
             }
             _ => panic!("Not registered"),

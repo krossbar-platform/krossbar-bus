@@ -32,8 +32,8 @@ impl PeerExample {
 
 #[async_trait]
 impl Peer for Pin<Box<PeerExample>> {
-    async fn register(&mut self) -> caro_bus_lib::Result<()> {
-        let peer = Self::register_peer("caro.service.peer").await?;
+    async fn register(&mut self, service_name: &str) -> caro_bus_lib::Result<()> {
+        let peer = Self::register_peer(service_name, "caro.service.peer").await?;
 
         self.method.init("method", peer)?;
         Ok(())
@@ -42,19 +42,24 @@ impl Peer for Pin<Box<PeerExample>> {
 
 #[async_trait]
 impl PeerSignalsAndStates for Pin<Box<PeerExample>> {
-    async fn register_callbacks(&mut self) -> BusResult<()> {
+    async fn register_callbacks(&mut self, service_name: &str) -> BusResult<()> {
         let context = caro_service::this::This { pointer: self };
 
-        Self::subscribe_on_signal("com.examples.service", "signal", move |p| async move {
-            context.get().signal_callback(p).await
-        })
+        Self::subscribe_on_signal(
+            service_name,
+            "com.examples.service",
+            "signal",
+            move |p| async move { context.get().signal_callback(p).await },
+        )
         .await?;
 
-        let current_state =
-            Self::watch_state("com.examples.service", "state", move |p| async move {
-                context.get().state_callback(p).await
-            })
-            .await?;
+        let current_state = Self::watch_state(
+            service_name,
+            "com.examples.service",
+            "state",
+            move |p| async move { context.get().state_callback(p).await },
+        )
+        .await?;
         self.state_callback(current_state).await;
 
         Ok(())
@@ -85,25 +90,31 @@ impl ServiceExample {
 }
 
 #[async_trait]
-impl Service for ServiceExample {
+impl Service for Pin<Box<ServiceExample>> {
+    fn service_name() -> &'static str {
+        "com.examples.service"
+    }
+
     async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
-        Self::register_bus("com.examples.service").await?;
+        Self::register_bus().await?;
 
-        self.peer.register().await?;
-        self.peer.register_callbacks().await?;
+        self.peer.register(Self::service_name()).await?;
+        self.peer.register_callbacks(Self::service_name()).await?;
 
-        self.signal.register("signal").await?;
-        self.state.register("state", 0).await?;
+        self.signal.register(Self::service_name(), "signal").await?;
+        self.state
+            .register(Self::service_name(), "state", 0)
+            .await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl ServiceMethods for Pin<Box<ServiceExample>> {
-    async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
+    async fn register_methods(&mut self, service_name: &str) -> caro_bus_lib::Result<()> {
         let context = caro_service::this::This { pointer: self };
 
-        Self::register_method("method", move |p| async move {
+        Self::register_method(service_name, "method", move |p| async move {
             context.get().hello_method(p).await
         })
         .await?;
@@ -120,7 +131,10 @@ async fn main() {
     let mut service = Box::pin(ServiceExample::new());
 
     service.register_service().await.unwrap();
-    service.register_methods().await.unwrap();
+    service
+        .register_methods("com.examples.service")
+        .await
+        .unwrap();
 
     loop {
         service.signal.emit("Hello".into());

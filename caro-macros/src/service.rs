@@ -16,7 +16,7 @@ pub(crate) fn parse_signals(fields: &syn::FieldsNamed) -> Vec<proc_macro2::Token
                 let signal_name = syn::LitStr::new(&signal_field.to_string(), signal_field.span());
 
                 result.push(quote! {
-                    self.#signal_field.register(#signal_name).await?;
+                    self.#signal_field.register(Self::service_name(), #signal_name).await?;
                 })
             }
         }
@@ -44,7 +44,7 @@ pub(crate) fn parse_states(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenS
                 };
 
                 result.push(quote! {
-                    self.#state_field.register(#state_name, #state_initial_value).await?;
+                    self.#state_field.register(Self::service_name(), #state_name, #state_initial_value).await?;
                 })
             }
         }
@@ -62,7 +62,7 @@ pub(crate) fn parse_peers(fields: &syn::FieldsNamed) -> Vec<proc_macro2::TokenSt
                 let peer_field = field.ident.as_ref().unwrap();
 
                 result.push(quote! {
-                    self.#peer_field.register().await?;
+                    self.#peer_field.register(Self::service_name()).await?;
                 })
             }
         }
@@ -228,7 +228,7 @@ pub(crate) fn parse_methods(methods: &Vec<syn::ImplItem>) -> Vec<proc_macro2::To
                         syn::LitStr::new(&method_ident.to_string(), method_ident.span());
 
                     result.push(quote! {
-                        Self::register_method(#method_name, move |p| async move {
+                        Self::register_method(service_name, #method_name, move |p| async move {
                                 context.get().#method_ident(p).await
                             })
                             .await?;

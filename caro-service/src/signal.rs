@@ -12,13 +12,17 @@ impl<T: Serialize + 'static> Signal<T> {
         Self { internal: None }
     }
 
-    pub async fn register(&mut self, signal_name: &str) -> BusResult<()> {
+    pub async fn register(&mut self, service_name: &str, signal_name: &str) -> BusResult<()> {
         if self.internal.is_some() {
             return Err(Box::new(BusError::AlreadyRegistered));
         }
 
-        match *crate::service::SERVICE_BUS.lock().await {
-            Some(ref mut bus) => self.internal = Some(bus.register_signal(signal_name)?),
+        match crate::service::SERVICE_HANDLES
+            .lock()
+            .await
+            .get_mut(service_name)
+        {
+            Some(handle) => self.internal = Some(handle.bus.register_signal(signal_name)?),
             _ => panic!("Not registered"),
         }
 

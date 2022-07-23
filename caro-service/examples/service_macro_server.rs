@@ -1,12 +1,10 @@
 use std::{pin::Pin, time::Duration};
 
-use caro_service::{service::ServiceMethods, Service as CaroService};
+use async_trait::async_trait;
 use log::LevelFilter;
 
-use async_trait::async_trait;
 use caro_macros::{method, service_impl, Service};
-use caro_service::Signal;
-use caro_service::State;
+use caro_service::{service::ServiceMethods, Service as CaroService, Signal, State};
 
 #[derive(Service)]
 //#[service("com.examples.service")]

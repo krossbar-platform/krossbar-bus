@@ -35,9 +35,13 @@ pub fn service(input: TokenStream) -> TokenStream {
             #[async_trait]
             impl caro_service::Service for Pin<Box<#struct_ident>>
                 where Self: caro_service::service::ServiceMethods {
+                fn service_name() -> &'static str {
+                    #service_name
+                }
+
                 async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
-                    Self::register_bus(#service_name).await?;
-                    self.register_methods().await?;
+                    Self::register_bus().await?;
+                    self.register_methods(Self::service_name()).await?;
 
                     #(#peers);*
                     #(#signals);*
@@ -50,8 +54,12 @@ pub fn service(input: TokenStream) -> TokenStream {
         quote! {
             #[async_trait]
             impl caro_service::Service for #struct_ident {
+                fn service_name() -> &'static str {
+                    #service_name
+                }
+
                 async fn register_service(&mut self) -> caro_bus_lib::Result<()> {
-                    Self::register_bus(#service_name).await?;
+                    Self::register_bus().await?;
 
                     #(#peers);*
                     #(#signals);*
@@ -81,7 +89,7 @@ pub fn service_impl(_attr: TokenStream, input: TokenStream) -> TokenStream {
 
         #[async_trait]
         impl caro_service::service::ServiceMethods for Pin<Box<#self_name>> {
-            async fn register_methods(&mut self) -> caro_bus_lib::Result<()> {
+            async fn register_methods(&mut self, service_name: &str) -> caro_bus_lib::Result<()> {
                 let context = caro_service::this::This { pointer: self };
 
                 #(#methods);*
@@ -111,7 +119,7 @@ pub fn peer(input: TokenStream) -> TokenStream {
     }
 
     let struct_ident = &service_struct.ident;
-    let (service_name, features) = peer::parse_name_and_features(&service_struct.attrs[0]);
+    let (peer_name, features) = peer::parse_name_and_features(&service_struct.attrs[0]);
 
     let procedures = peer::parse_remote_methods(&struct_fields);
 
@@ -120,9 +128,9 @@ pub fn peer(input: TokenStream) -> TokenStream {
             #[async_trait]
             impl caro_service::peer::Peer for Pin<Box<#struct_ident>>
                 where Pin<Box<#struct_ident>>: caro_service::peer::PeerSignalsAndStates {
-                async fn register(&mut self) -> caro_bus_lib::Result<()> {
-                    let peer = Self::register_peer(#service_name).await?;
-                    self.register_callbacks().await?;
+                async fn register(&mut self, service_name: &str) -> caro_bus_lib::Result<()> {
+                    let peer = Self::register_peer(service_name, #peer_name).await?;
+                    self.register_callbacks(service_name).await?;
 
                     #(#procedures);*
                     Ok(())
@@ -133,8 +141,8 @@ pub fn peer(input: TokenStream) -> TokenStream {
         quote! {
             #[async_trait]
             impl caro_service::peer::Peer for Pin<Box<#struct_ident>> {
-                async fn register(&mut self) -> caro_bus_lib::Result<()> {
-                    let peer = Self::register_peer(#service_name).await?;
+                async fn register(&mut self, service_name: &str) -> caro_bus_lib::Result<()> {
+                    let peer = Self::register_peer(service_name, #peer_name).await?;
 
                     #(#procedures);*
                     Ok(())
@@ -145,7 +153,7 @@ pub fn peer(input: TokenStream) -> TokenStream {
 
     quote! {
         impl caro_service::peer::PeerName for Pin<Box<#struct_ident>> {
-            fn peer_name() -> &'static str { #service_name }
+            fn peer_name() -> &'static str { #peer_name }
         }
 
         #peer_impl
@@ -177,7 +185,7 @@ pub fn peer_impl(_attr: TokenStream, input: TokenStream) -> TokenStream {
         #[async_trait]
         impl caro_service::peer::PeerSignalsAndStates for Pin<Box<#self_name>>
             where Pin<Box<#self_name>>: caro_service::peer::PeerName {
-            async fn register_callbacks(&mut self) -> caro_bus_lib::Result<()> {
+            async fn register_callbacks(&mut self, service_name: &str) -> caro_bus_lib::Result<()> {
                 let context = caro_service::this::This { pointer: self };
 
                 #(#signals);*
