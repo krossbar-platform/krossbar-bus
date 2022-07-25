@@ -138,6 +138,21 @@ async fn handle_input_line(service: &mut Peer, line: &String) -> bool {
                 err.to_string()
             ),
         }
+    } else if words[0] == "inspect" {
+        match service
+            .call::<(), caro_bus_common::connect::InspectData>(
+                caro_bus_common::connect::INSPECT_METHOD,
+                &(),
+            )
+            .await
+        {
+            Ok(resp) => println!("{}", resp),
+            Err(err) => println!(
+                "Failed to inspect service '{}': {}",
+                service.name(),
+                err.to_string()
+            ),
+        }
     } else {
         println!(
             "Unknown command '{}'. Type 'help' to get list of commands",

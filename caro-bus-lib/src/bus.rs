@@ -1,4 +1,5 @@
 use std::{
+    any::type_name,
     collections::HashMap,
     future::Future,
     os::unix::{
@@ -32,6 +33,7 @@ use crate::{
 };
 
 use caro_bus_common::{
+    connect::InspectData,
     errors::Error as BusError,
     messages::{self, IntoMessage, Message, MessageBody, Response, ServiceMessage},
     monitor::MONITOR_SERVICE_NAME,
@@ -64,6 +66,8 @@ pub struct Bus {
     shutdown_tx: Sender<()>,
     /// Monitor connection if connected
     monitor: Option<Arc<TokioRwLock<PeerConnection>>>,
+    /// Data for service inspection
+    inspect_data: Shared<InspectData>,
 }
 
 impl Bus {
@@ -85,6 +89,7 @@ impl Bus {
             task_tx: task_tx.clone(),
             shutdown_tx,
             monitor: None,
+            inspect_data: Arc::new(RwLock::new(InspectData::new())),
         };
 
         let hub_connection = HubConnection::connect(service_name).await?;
@@ -216,6 +221,14 @@ impl Bus {
         let method_name = method_name.into();
         let mut rx = self.update_method_map(&method_name)?;
 
+        // Add the method into the inspection register
+        self.inspect_data.write().unwrap().methods.push(format!(
+            "{}({}) -> {}",
+            method_name,
+            type_name::<P>().split("::").last().unwrap_or("Unknown"),
+            type_name::<R>().split("::").last().unwrap_or("Unknown")
+        ));
+
         tokio::spawn(async move {
             loop {
                 match rx.recv().await {
@@ -296,6 +309,13 @@ impl Bus {
             return Err(Box::new(BusError::AlreadyRegistered));
         }
 
+        // Add the signal into the inspection register
+        self.inspect_data.write().unwrap().signals.push(format!(
+            "{}: {}",
+            signal_name,
+            type_name::<T>().split("::").last().unwrap_or("Unknown"),
+        ));
+
         let (tx, _rx) = broadcast::channel(5);
 
         signals.insert(signal_name.into(), tx.clone());
@@ -326,6 +346,13 @@ impl Bus {
 
             return Err(Box::new(BusError::AlreadyRegistered));
         }
+
+        // Add the state into the inspection register
+        self.inspect_data.write().unwrap().states.push(format!(
+            "{}: {}",
+            state_name,
+            type_name::<T>().split("::").last().unwrap_or("Unknown"),
+        ));
 
         // Channel to send state update to subscribers
         let (tx, _rx) = broadcast::channel(5);
@@ -410,6 +437,10 @@ impl Bus {
             caller_name, method_name
         );
 
+        if method_name == caro_bus_common::connect::INSPECT_METHOD {
+            return self.handle_inspect_call(seq);
+        }
+
         let method = self.methods.read().unwrap().get(method_name).cloned();
 
         if let Some(method) = method {
@@ -423,6 +454,12 @@ impl Bus {
         } else {
             BusError::NotRegistered.into_message(seq)
         }
+    }
+
+    /// Handle incoming method call
+    fn handle_inspect_call(&self, seq: u64) -> Message {
+        Response::Return(bson::to_bson(&*self.inspect_data.read().unwrap()).unwrap())
+            .into_message(seq)
     }
 
     /// Handle incoming signal subscription

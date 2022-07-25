@@ -142,6 +142,10 @@ impl Peer {
         result
     }
 
+    pub fn name(&self) -> String {
+        self.service_name.read().unwrap().clone()
+    }
+
     /// Remote method call\
     /// **P** is an argument type. Should be a serializable structure.\
     /// **R** is return type. Should be a deserializable structure
