@@ -1,11 +1,10 @@
-use std::{
-    io::{self, Write},
-    str::FromStr,
-};
+use std::str::FromStr;
 
 use clap::{self, Parser};
 use colored::*;
 use log::{LevelFilter, *};
+use rustyline::error::ReadlineError;
+use rustyline::{ColorMode, Config, Editor, Result};
 use serde_json::Value;
 
 use caro_bus_common::connect::CONNECT_SERVICE_NAME;
@@ -26,6 +25,10 @@ pub struct Args {
 
 fn print_help() {
     println!(
+        "\t{} Inspect registered methods, signals, and states",
+        "inspect".bright_blue()
+    );
+    println!(
         "\t{} {{method_name}} {{argument}} Call method with the given argument. Argument should be a JSON,",
         "call".bright_yellow()
     );
@@ -42,7 +45,7 @@ fn print_help() {
         "\t{} {{state_name}} Watch for the state changes",
         "watch".bright_yellow()
     );
-    println!("\t{} Quit", "q".bright_yellow());
+    println!("\t{} Quit", "q".bright_blue());
 }
 
 fn format_response(endpoint_type: &str, endpoint_name: &str, json: &Value) {
@@ -55,7 +58,7 @@ fn format_response(endpoint_type: &str, endpoint_name: &str, json: &Value) {
     );
 }
 
-async fn handle_input_line(service: &mut Peer, line: String) -> bool {
+async fn handle_input_line(service: &mut Peer, line: &String) -> bool {
     let words: Vec<&str> = line.split(' ').collect();
 
     if words.len() == 0 {
@@ -136,14 +139,17 @@ async fn handle_input_line(service: &mut Peer, line: String) -> bool {
             ),
         }
     } else {
-        println!("Unknown command. Type 'help' to get list of commands")
+        println!(
+            "Unknown command '{}'. Type 'help' to get list of commands",
+            words[0]
+        )
     }
 
     return false;
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     debug!("Starting Caro bus connect");
 
     let args = Args::parse();
@@ -164,18 +170,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to connect to the target service");
 
     debug!("Succesfully connected to the service");
+    print_help();
 
-    let input_promt = || print!("{}", "> ".bright_green());
+    let config = Config::builder().color_mode(ColorMode::Enabled).build();
+    let mut rl = Editor::<()>::with_config(config)?;
 
-    input_promt();
-    io::stdout().flush().unwrap();
-    for line_result in io::stdin().lines() {
-        if handle_input_line(&mut peer, line_result?).await {
-            return Ok(());
+    loop {
+        let readline = rl.readline(&format!("{}", ">> ".bright_green()));
+        match readline {
+            Ok(line) => {
+                if handle_input_line(&mut peer, &line).await {
+                    return Ok(());
+                }
+
+                rl.add_history_entry(line.as_str());
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
         }
-
-        input_promt();
-        io::stdout().flush().unwrap();
     }
 
     Ok(())

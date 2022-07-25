@@ -12,6 +12,7 @@ colored = "2.0.0"
 log = "0.4"
 pretty_env_logger = "0.4"
 tokio = { version = "1.19", features = ["full"] }
+rustyline = "10.0.0"
 
 caro-bus-lib = { path = "../caro-bus-lib" }
 caro-bus-common = { path = "../caro-bus-common" }
