@@ -11,11 +11,8 @@ async fn main() {
 
     let mut bus = Bus::register("com.examples.register_method").await.unwrap();
 
-    bus.register_method(
-        "method",
-        |val: i32| async move { format!("Hello, {}", val) },
-    )
-    .unwrap();
+    bus.register_method("method", |val: i32| async move { val })
+        .unwrap();
 
     let _ = tokio::signal::ctrl_c().await;
 }
