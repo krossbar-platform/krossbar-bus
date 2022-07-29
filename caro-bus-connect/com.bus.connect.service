@@ -1,3 +1,3 @@
 {
-    "exec": "/data/caro/*"
+    "exec": "/usr/bin/caro-bus-connect"
 }
