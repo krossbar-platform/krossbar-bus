@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, sync::Arc};
+use std::{collections::HashMap, fs, os::unix::prelude::PermissionsExt, sync::Arc};
 
 use caro_bus_common::{
     self as common,
@@ -65,12 +65,17 @@ impl Hub {
     /// Start listening for incoming connections
     pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let socket_path = common::get_hub_socket_path();
+
         match UnixListener::bind(socket_path.clone()) {
             Ok(listener) => {
                 info!(
                     "Succesfully started listening for incoming connections at: {}",
                     socket_path
                 );
+
+                // Update permissions to be accessible for th eclient
+                let socket_permissions = fs::Permissions::from_mode(0o666);
+                fs::set_permissions(socket_path.clone(), socket_permissions)?;
 
                 loop {
                     tokio::select! {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Caro platform bus hub
+
+[Service]
+ExecStart=/usr/bin/caro-bus-hub
+StandardOutput=journal
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+Alias=caro.hub.service
