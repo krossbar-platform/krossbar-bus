@@ -6,6 +6,4 @@ members = [
     "caro-bus-hub",
     "caro-bus-monitor",
     "caro-bus-lib",
-    "caro-macros",
-    "caro-service",
 ]
