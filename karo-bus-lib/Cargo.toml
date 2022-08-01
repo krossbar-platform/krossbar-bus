@@ -1,0 +1,24 @@
+[package]
+name = "karo-bus-lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+async-recursion = "1.0.0"
+bson = "2.3"
+bytes = "1.1"
+log = "0.4"
+# TODO: Limit fetures
+tokio = { version = "1.19", features = ["full"] }
+tokio-send-fd = "0.9"
+serde = "1.0"
+
+karo-bus-common = { path = "../karo-bus-common" }
+
+[dev-dependencies]
+pretty_env_logger = "0.4"
+json = "0.12.4"
+tempdir = "0.3.7"
+
+karo-bus-hub = { path = "../karo-bus-hub" }

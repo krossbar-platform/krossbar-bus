@@ -1,9 +1,9 @@
 [workspace]
 
 members = [
-    "caro-bus-common",
-    "caro-bus-connect",
-    "caro-bus-hub",
-    "caro-bus-monitor",
-    "caro-bus-lib",
+    "karo-bus-common",
+    "karo-bus-connect",
+    "karo-bus-hub",
+    "karo-bus-monitor",
+    "karo-bus-lib",
 ]
