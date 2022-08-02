@@ -4,7 +4,7 @@ Description=Karo platform bus hub
 [Service]
 ExecStart=/usr/bin/karo-bus-hub
 StandardOutput=journal
-Restart=on-failure
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
