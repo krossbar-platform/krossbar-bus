@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::messages::Message;
 
-pub const MONITOR_SERVICE_NAME: &str = "com.bus.monitor";
+pub const MONITOR_SERVICE_NAME: &str = "karo.bus.monitor";
 pub const MONITOR_METHOD: &str = "message";
 
 /// Monitor message directions. Used for more convenient formatting

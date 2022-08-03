@@ -3,7 +3,7 @@ use std::fmt::Display;
 use colored::*;
 use serde::{Deserialize, Serialize};
 
-pub const CONNECT_SERVICE_NAME: &str = "com.bus.connect";
+pub const CONNECT_SERVICE_NAME: &str = "karo.bus.connect";
 
 pub const INSPECT_METHOD: &str = "inspect";
 

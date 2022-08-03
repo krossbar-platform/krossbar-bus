@@ -8,7 +8,7 @@ pub mod service_names;
 
 use std::env;
 
-pub const SERVICE_FILES_DIR: &str = "/etc/karo.services.d";
+pub const SERVICE_FILES_DIR: &str = "/etc/karo/services";
 pub const DEFAULT_HUB_SOCKET_PATH: &str = "/var/run/karo.bus.socket";
 pub const HUB_SOCKET_PATH_ENV: &str = "CARO_HUB_SOCKET_PATH";
 
