@@ -9,8 +9,7 @@ async-recursion = "1.0.0"
 bson = "2.3"
 bytes = "1.1"
 log = "0.4"
-# TODO: Limit fetures
-tokio = { version = "1.19", features = ["full"] }
+tokio = { version = "1.19", features = ["sync", "io-util", "net", "time"] }
 tokio-send-fd = "0.9"
 serde = "1.0"
 
@@ -22,3 +21,4 @@ json = "0.12.4"
 tempdir = "0.3.7"
 
 karo-bus-hub = { path = "../karo-bus-hub" }
+tokio = { version = "1.19", features = ["rt-multi-thread", "signal", "fs"] }
