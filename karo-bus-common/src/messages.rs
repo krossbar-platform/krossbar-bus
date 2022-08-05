@@ -243,7 +243,8 @@ impl Display for Response {
 /// *Returns*:
 /// 1. EitherMessage::FullMessage(message) if completely read the message
 /// 2. EitherMessage::NeedMoreData(len) if still need to read n bytes of data to get a message
-pub(crate) fn parse_buffer(buffer: &mut BytesMut) -> EitherMessage {
+/// **log** param if we need to log in the function
+pub(crate) fn parse_buffer(buffer: &mut BytesMut, log: bool) -> EitherMessage {
     // Not enough data
     if buffer.len() < 4 {
         return EitherMessage::NeedMoreData(4);
@@ -254,14 +255,18 @@ pub(crate) fn parse_buffer(buffer: &mut BytesMut) -> EitherMessage {
             // First lets find BSON document len
             let frame_len = i32::from_le_bytes(frame_len_bytes) as usize;
 
-            trace!("Next frame len: {}. Buffer len {}", frame_len, buffer.len());
+            if log {
+                trace!("Next frame len: {}. Buffer len {}", frame_len, buffer.len());
+            }
 
             // If buffer contains complete document, try to parse
             if buffer.len() >= frame_len {
                 if let Ok(frame) = bson::from_slice(buffer.as_ref()) {
                     buffer.advance(frame_len);
 
-                    trace!("Incoming BSON message of len {}: {:?}", frame_len, frame);
+                    if log {
+                        trace!("Incoming BSON message of len {}: {:?}", frame_len, frame);
+                    }
 
                     // Full message read
                     return EitherMessage::FullMessage(frame);
@@ -274,7 +279,9 @@ pub(crate) fn parse_buffer(buffer: &mut BytesMut) -> EitherMessage {
             }
         }
         Err(err) => {
-            error!("Failed to convert buffer in a slice: {}", err);
+            if log {
+                error!("Failed to convert buffer in a slice: {}", err);
+            }
         }
     }
 

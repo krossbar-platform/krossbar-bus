@@ -109,13 +109,13 @@ impl SimplePeer {
         read_buffer: &mut BytesMut,
     ) -> Option<Message> {
         loop {
-            match net::read_message_from_socket_trace(socket, read_buffer, false).await {
+            match net::read_message_from_socket_log(socket, read_buffer, false).await {
                 Ok(message) => {
                     match message.body() {
                         // If got a response to a call, handle it by call_registry. Otherwise it's
                         // an incoming call. Use [handle_bus_message]
                         MessageBody::Response(_) => {
-                            self.call_registry.resolve_trace(message, false).await
+                            self.call_registry.resolve_log(message, false).await
                         }
                         _ => return Some(message),
                     }
@@ -142,7 +142,7 @@ impl SimplePeer {
     ) -> Option<()> {
         while let Err(_) = self
             .call_registry
-            .call_trace(socket, &mut message, &callback, false)
+            .call_log(socket, &mut message, &callback, false)
             .await
         {
             self.reconnect(socket).await;

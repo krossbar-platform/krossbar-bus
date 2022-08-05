@@ -6,21 +6,21 @@ use tokio::{io::AsyncReadExt, net::UnixStream};
 
 use crate::messages::{self, EitherMessage, Message};
 
+/// Function to read Message from a socket. This function is intended to read exact amount
+/// of data to parse a message. The lib need this, because we may have a file descriptor right after a
+/// message. And we want to keep those descriptor to read it with passfd::recv_fd
 pub async fn read_message_from_socket(
     socket: &mut UnixStream,
     buffer: &mut BytesMut,
 ) -> IoResult<Message> {
-    read_message_from_socket_trace(socket, buffer, true).await
+    read_message_from_socket_log(socket, buffer, true).await
 }
 
-/// Function to read Message from a socket. This function is intended to read exact amount
-/// of data to parse a message. The lib need this, because we may have a file descriptor right after a
-/// message. And we want to keep those descriptor to read it with passfd::recv_fd
-/// **trace** param is for tracing to never trace when sending log message
-pub async fn read_message_from_socket_trace(
+/// **log** param is for tracing to never log when sending log message
+pub async fn read_message_from_socket_log(
     socket: &mut UnixStream,
     buffer: &mut BytesMut,
-    trace: bool,
+    log: bool,
 ) -> IoResult<Message> {
     // First read Bson length
     let mut bytes_to_read = 4;
@@ -33,7 +33,7 @@ pub async fn read_message_from_socket_trace(
             Ok(bytes_read) => {
                 // Socket closed
                 if bytes_read == 0 {
-                    if trace {
+                    if log {
                         trace!("Read zero bytes from a socket");
                     }
 
@@ -42,7 +42,7 @@ pub async fn read_message_from_socket_trace(
 
                 // Descrease bytes by number of bytes already read
                 bytes_to_read = bytes_to_read - bytes_read as u64;
-                if trace {
+                if log {
                     trace!(
                         "Read {} bytes from socket. Still {} to read",
                         bytes_read,
@@ -56,10 +56,10 @@ pub async fn read_message_from_socket_trace(
                 }
 
                 // Try to parse message to take exact amount of data we need to read to get a message
-                match messages::parse_buffer(buffer) {
+                match messages::parse_buffer(buffer, log) {
                     EitherMessage::FullMessage(message) => return Ok(message),
                     EitherMessage::NeedMoreData(len) => {
-                        if trace {
+                        if log {
                             trace!("Parser asks for {} more bytes to read", len);
                         }
                         // Try to read exact amount of data to get a message next time
@@ -69,10 +69,12 @@ pub async fn read_message_from_socket_trace(
                 }
             }
             Err(err) => {
-                error!(
+                if log {
+                    error!(
                     "Failed to read from a socket: {}. Client is disconnected. Shutting him down",
                     err.to_string()
                 );
+                }
                 return Err(err);
             }
         };

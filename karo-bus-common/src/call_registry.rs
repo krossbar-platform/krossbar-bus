@@ -50,21 +50,21 @@ impl CallRegistry {
         message: &mut Message,
         callback: &Sender<Message>,
     ) -> IoResult<()> {
-        self.call_trace(socket, message, callback, true).await
+        self.call_log(socket, message, callback, true).await
     }
 
-    pub async fn call_trace(
+    pub async fn call_log(
         &mut self,
         socket: &mut UnixStream,
         message: &mut Message,
         callback: &Sender<Message>,
-        trace: bool,
+        log: bool,
     ) -> IoResult<()> {
         let seq = self.seq_counter.fetch_add(1, Ordering::SeqCst);
         message.seq = seq;
 
         let persistent = CallRegistry::is_persistent_call(&message);
-        if trace {
+        if log {
             trace!(
                 "Registerng a call with seq {}: {:?}. {}",
                 message.seq(),
@@ -87,10 +87,10 @@ impl CallRegistry {
 
     /// Resolve a client call with a given *message*
     pub async fn resolve(&mut self, message: Message) {
-        self.resolve_trace(message, true).await
+        self.resolve_log(message, true).await
     }
 
-    pub async fn resolve_trace(&mut self, message: Message, trace: bool) {
+    pub async fn resolve_log(&mut self, message: Message, log: bool) {
         // Keep subscriptions
         let seq = message.seq();
 
@@ -98,26 +98,26 @@ impl CallRegistry {
 
         match maybe_sender {
             Some(call) => {
-                if trace {
+                if log {
                     trace!("Succesfully resolved a call {}", message.seq);
                 }
 
                 if let Err(mess) = call.callback.send(message).await {
-                    if trace {
+                    if log {
                         error!("Failed to send response to a client: {:?}", mess);
                     }
                     return;
                 }
 
                 if !call.persistent {
-                    if trace {
+                    if log {
                         trace!("Removing resolved call: {}", seq);
                     }
                     self.calls.write().unwrap().remove(&seq);
                 }
             }
             _ => {
-                if trace {
+                if log {
                     warn!("Unknown client response: {:?}", message);
                 }
             }
