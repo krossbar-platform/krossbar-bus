@@ -1,7 +1,10 @@
 use std::{
     fmt::Debug,
     os::unix::{net::UnixStream as OsStream, prelude::FromRawFd},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
     time::Duration,
 };
 
@@ -37,6 +40,8 @@ pub struct SimplePeer {
     shutdown_tx: Sender<()>,
     /// Sender to forward calls to the service. Used to reconnect
     call_registry: CallRegistry,
+    /// If connection is alive. Otherwise it's reconnecting
+    online: Arc<AtomicBool>,
 }
 
 impl SimplePeer {
@@ -57,6 +62,7 @@ impl SimplePeer {
             task_tx,
             shutdown_tx,
             call_registry: CallRegistry::new(),
+            online: Arc::new(AtomicBool::new(true)),
         };
         let result = this.clone();
 
@@ -121,7 +127,7 @@ impl SimplePeer {
                     }
                 }
                 Err(_) => {
-                    eprint!("Failed to read message from a socket. Trying to reconnect");
+                    eprintln!("Failed to read message from a socket. Trying to reconnect");
                     self.reconnect(socket).await;
 
                     // Ask service to close connection
@@ -146,14 +152,20 @@ impl SimplePeer {
             .call_log(socket, &mut message, &callback, false)
             .await
         {
-            eprint!("Failed to write message into a socket. Trying to reconnect");
-            self.reconnect(socket).await;
+            eprintln!("Failed to write message into a socket. Offline");
+            return None;
         }
 
         Some(())
     }
 
     async fn reconnect(&mut self, socket: &mut UnixStream) {
+        if self.online.load(Ordering::Acquire) {
+            eprintln!("Trying to reconnect while online");
+        }
+
+        self.online.store(false, Ordering::Release);
+
         loop {
             println!(
                 "Reconnect loop {} to {}",
@@ -176,6 +188,7 @@ impl SimplePeer {
                             let stream = UnixStream::from_std(os_stream).unwrap();
                             *socket = stream;
 
+                            self.online.store(true, Ordering::Release);
                             return;
                         }
                         _ => {}
@@ -206,6 +219,11 @@ impl SimplePeer {
         method_name: &str,
         params: &P,
     ) -> crate::Result<R> {
+        // Return error if offline
+        if !self.online.load(Ordering::Acquire) {
+            return Err(BusError::NotConnected.into());
+        }
+
         let message = Message::new_call(
             self.peer_service_name.read().unwrap().clone(),
             method_name.into(),
