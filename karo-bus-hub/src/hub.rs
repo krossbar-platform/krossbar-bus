@@ -235,7 +235,7 @@ impl Hub {
         };
 
         trace!(
-            "Trying to connect `{}` to the {}",
+            "Trying to connect `{}` to the `{}`",
             requester_service_name,
             target_service_name
         );

@@ -155,7 +155,11 @@ impl SimplePeer {
 
     async fn reconnect(&mut self, socket: &mut UnixStream) {
         loop {
-            println!("Reconnect loop");
+            println!(
+                "Reconnect loop {} to {}",
+                self.service_name.read().unwrap(),
+                self.peer_service_name.read().unwrap()
+            );
 
             let connection_message =
                 Message::new_connection(self.peer_service_name.read().unwrap().clone(), true);
