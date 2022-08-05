@@ -71,6 +71,10 @@ pub struct Bus {
 }
 
 impl Bus {
+    pub fn service_name(&self) -> String {
+        self.service_name.read().unwrap().clone()
+    }
+
     /// Register service. Tries to register the service at the hub. The method may fail registering
     /// if the executable is not allowed to register with the given service name, or
     /// service name is already taken
