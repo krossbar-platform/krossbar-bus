@@ -121,6 +121,7 @@ impl SimplePeer {
                     }
                 }
                 Err(_) => {
+                    eprint!("Failed to read message from a socket. Trying to reconnect");
                     self.reconnect(socket).await;
 
                     // Ask service to close connection
@@ -145,6 +146,7 @@ impl SimplePeer {
             .call_log(socket, &mut message, &callback, false)
             .await
         {
+            eprint!("Failed to write message into a socket. Trying to reconnect");
             self.reconnect(socket).await;
         }
 
@@ -153,12 +155,16 @@ impl SimplePeer {
 
     async fn reconnect(&mut self, socket: &mut UnixStream) {
         loop {
+            println!("Reconnect loop");
+
             let connection_message =
                 Message::new_connection(self.service_name.read().unwrap().clone(), true);
 
             // Request service connection to send connection message
             match utils::call_task(&self.service_tx, connection_message).await {
                 Ok(message) => {
+                    println!("Received reconnected fd message");
+
                     match message.body() {
                         // This is a message we should receive if succesfully reconnected
                         MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
