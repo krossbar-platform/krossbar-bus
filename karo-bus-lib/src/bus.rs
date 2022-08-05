@@ -204,6 +204,49 @@ impl Bus {
             .unwrap())
     }
 
+    pub async fn log_connect(
+        &mut self,
+        logging_service_name: &str,
+    ) -> crate::Result<crate::simple_peer::SimplePeer> {
+        match utils::call_task(
+            &self.task_tx,
+            Message::new_connection(logging_service_name.into(), false),
+        )
+        .await?
+        .body()
+        {
+            // Client can receive two types of responses for a connection request:
+            // 1. Response::Error if service is not allowed to connect
+            // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
+            // Handle second case next
+            MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
+                info!("Connection to `{}` succeded", logging_service_name);
+                let os_stream = unsafe { OsStream::from_raw_fd(*fd) };
+                let stream = UnixStream::from_std(os_stream).unwrap();
+
+                // Create new service connection handle. Can be used to handle own
+                // connection requests by just returning already existing handle
+                Ok(crate::simple_peer::SimplePeer::new(
+                    self.service_name.read().unwrap().clone(),
+                    logging_service_name.into(),
+                    stream,
+                    self.task_tx.clone(),
+                ))
+            }
+            // Hub doesn't allow connection
+            MessageBody::Response(Response::Error(err)) => {
+                // This is an invalid
+                warn!("Failed to connect to `{}`: {}", &logging_service_name, err);
+                return Err(Box::new(err.clone()));
+            }
+            // Invalid protocol here
+            m => {
+                error!("Invalid response from the hub: {:?}", m);
+                return Err(Box::new(BusError::InvalidMessage));
+            }
+        }
+    }
+
     /// Register service method. The function uses BSON internally for requests
     /// and responses.\
     /// **P** is paramtere type. Should be a deserializable structure\

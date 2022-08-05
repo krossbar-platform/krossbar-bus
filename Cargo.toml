@@ -6,5 +6,4 @@ members = [
     "karo-bus-hub",
     "karo-bus-monitor",
     "karo-bus-lib",
-    "karo-bus-simple-client",
 ]
