@@ -158,7 +158,7 @@ impl SimplePeer {
             println!("Reconnect loop");
 
             let connection_message =
-                Message::new_connection(self.service_name.read().unwrap().clone(), true);
+                Message::new_connection(self.peer_service_name.read().unwrap().clone(), true);
 
             // Request service connection to send connection message
             match utils::call_task(&self.service_tx, connection_message).await {
