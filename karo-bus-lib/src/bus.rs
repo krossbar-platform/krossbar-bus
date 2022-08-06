@@ -208,13 +208,15 @@ impl Bus {
             .unwrap())
     }
 
-    pub async fn log_connect(
+    /// Connect simple peer
+    #[cfg(feature = "simple_peer")]
+    pub async fn simple_connect(
         &mut self,
-        logging_service_name: &str,
+        service_name: &str,
     ) -> crate::Result<crate::simple_peer::SimplePeer> {
         match utils::call_task(
             &self.task_tx,
-            Message::new_connection(logging_service_name.into(), false),
+            Message::new_connection(service_name.into(), false),
         )
         .await?
         .body()
@@ -224,7 +226,7 @@ impl Bus {
             // 2. Response::Ok and a socket fd right after the message if the hub allows the connection
             // Handle second case next
             MessageBody::ServiceMessage(ServiceMessage::PeerFd(fd)) => {
-                info!("Connection to `{}` succeded", logging_service_name);
+                info!("Connection to `{}` succeded", service_name);
                 let os_stream = unsafe { OsStream::from_raw_fd(*fd) };
                 let stream = UnixStream::from_std(os_stream).unwrap();
 
@@ -232,7 +234,7 @@ impl Bus {
                 // connection requests by just returning already existing handle
                 Ok(crate::simple_peer::SimplePeer::new(
                     self.service_name.read().unwrap().clone(),
-                    logging_service_name.into(),
+                    service_name.into(),
                     stream,
                     self.task_tx.clone(),
                 ))
@@ -240,7 +242,7 @@ impl Bus {
             // Hub doesn't allow connection
             MessageBody::Response(Response::Error(err)) => {
                 // This is an invalid
-                warn!("Failed to connect to `{}`: {}", &logging_service_name, err);
+                warn!("Failed to connect to `{}`: {}", &service_name, err);
                 return Err(Box::new(err.clone()));
             }
             // Invalid protocol here

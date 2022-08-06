@@ -11,7 +11,13 @@ json = "0.12.4"
 log = "0.4"
 nix = "0.24"
 pretty_env_logger = "0.4"
-tokio = { version = "1.19", features = ["macros", "sync", "io-util", "net"] }
+tokio = { version = "1.19", features = [
+    "macros",
+    "sync",
+    "io-util",
+    "net",
+    "rt-multi-thread",
+] }
 tokio-send-fd = "0.9"
 uuid = { version = "1.1", features = ["v4", "fast-rng"] }
 
@@ -20,5 +26,6 @@ karo-bus-common = { path = "../karo-bus-common" }
 [dev-dependencies]
 json = "0.12.4"
 tempdir = "0.3.7"
+tokio = { version = "1.19", features = ["fs", "signal"] }
 
 karo-bus-lib = { path = "../karo-bus-lib" }

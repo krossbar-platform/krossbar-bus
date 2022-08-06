@@ -3,7 +3,7 @@ mod hub_connection;
 pub mod peer;
 mod peer_connection;
 pub mod signal;
-// #[cfg(feature = "simple_peer")]
+#[cfg(feature = "simple_peer")]
 pub mod simple_peer;
 pub mod state;
 mod utils;
