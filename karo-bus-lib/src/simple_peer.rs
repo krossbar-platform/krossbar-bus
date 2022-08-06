@@ -25,12 +25,14 @@ use karo_bus_common::{
 
 type Shared<T> = Arc<RwLock<T>>;
 
-/// P2p service connection handle
+/// P2p simple service connection handle.
+/// Supports only method calls.
+/// Doesn't use log interface to allow using from Karo logging
 #[derive(Clone)]
 pub struct SimplePeer {
     /// Own service name
     service_name: Shared<String>,
-    /// SimplePeer service name
+    /// Peer service name
     peer_service_name: Shared<String>,
     /// Sender to forward calls to the service
     service_tx: TaskChannel,
@@ -79,7 +81,7 @@ impl SimplePeer {
                         if matches!(message.body(), MessageBody::Response(Response::Shutdown(_))) {
                             this.close().await
                         } else {
-                            // SimplePeer handle resolves call itself. If message returned, redirect to
+                            // Call registry handle resolves call itself. If message returned, redirect to
                             // the service connection
                             let response = this.handle_peer_message(message).await;
 
@@ -107,8 +109,7 @@ impl SimplePeer {
         result
     }
 
-    /// Read incoming messages. [PeerConnection] calls callbacks stored in the [CallRegistry] if message is a call
-    /// response. Otherwise will return incoming message to the caller
+    /// Read incoming messages. Automatically resolver method calls using [CallRegistry]
     pub async fn read_message(
         &mut self,
         socket: &mut UnixStream,
@@ -159,6 +160,7 @@ impl SimplePeer {
         Some(())
     }
 
+    /// Start reconnecting
     async fn reconnect(&mut self, socket: &mut UnixStream) {
         if self.online.load(Ordering::Acquire) {
             eprintln!("Trying to reconnect while online");
@@ -253,6 +255,7 @@ impl SimplePeer {
     }
 
     /// Handle messages from the peer
+    /// Simple peer just redirects all to the service
     async fn handle_peer_message(&mut self, message: messages::Message) -> Message {
         let response_seq = message.seq();
 
