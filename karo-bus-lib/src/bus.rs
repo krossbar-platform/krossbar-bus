@@ -209,7 +209,7 @@ impl Bus {
     }
 
     /// Connect simple peer
-    #[cfg(feature = "simple_peer")]
+    #[cfg(feature = "simple-peer")]
     pub async fn simple_connect(
         &mut self,
         service_name: &str,
