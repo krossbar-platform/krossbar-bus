@@ -106,10 +106,6 @@ impl Hub {
         }
     }
 
-    fn client(&mut self, service_name: &String) -> &mut Client {
-        self.clients.get_mut(service_name).unwrap()
-    }
-
     /// Handle new connection
     async fn handle_new_client(&mut self, socket: UnixStream) {
         // Temporal ID until client sends registration message
@@ -250,12 +246,22 @@ impl Hub {
                     requester_service_name, target_service_name
                 );
 
-                self.client(&requester_service_name)
-                    .send_message(
-                        &target_service_name,
-                        BusError::ServiceNotFound.into_message(request.seq()),
-                    )
-                    .await;
+                match self.clients.get_mut(&requester_service_name) {
+                    Some(client) => {
+                        client
+                            .send_message(
+                                &target_service_name,
+                                BusError::ServiceNotFound.into_message(request.seq()),
+                            )
+                            .await;
+                    }
+                    _ => {
+                        warn!(
+                            "Failed to lookup `{}` service. Asumming disconnected",
+                            requester_service_name
+                        );
+                    }
+                }
                 return;
             }
 
@@ -265,12 +271,23 @@ impl Hub {
                     target_service_name,
                 );
 
-                self.client(&requester_service_name)
-                    .send_message(
-                        &target_service_name,
-                        BusError::NotAllowed.into_message(request.seq()),
-                    )
-                    .await;
+                match self.clients.get_mut(&requester_service_name) {
+                    Some(client) => {
+                        client
+                            .send_message(
+                                &target_service_name,
+                                BusError::NotAllowed.into_message(request.seq()),
+                            )
+                            .await;
+                    }
+                    _ => {
+                        warn!(
+                            "Failed to lookup `{}` service. Asumming disconnected",
+                            requester_service_name
+                        );
+                    }
+                }
+
                 return;
             }
 
@@ -283,12 +300,23 @@ impl Hub {
                         target_service_name, requester_service_name
                     );
 
-                    self.client(&requester_service_name)
-                        .send_message(
-                            &target_service_name,
-                            BusError::ServiceNotRegisterd.into_message(request.seq()),
-                        )
-                        .await;
+                    match self.clients.get_mut(&requester_service_name) {
+                        Some(client) => {
+                            client
+                                .send_message(
+                                    &target_service_name,
+                                    BusError::ServiceNotRegisterd.into_message(request.seq()),
+                                )
+                                .await;
+                        }
+                        _ => {
+                            warn!(
+                                "Failed to lookup `{}` service. Asumming disconnected",
+                                requester_service_name
+                            );
+                        }
+                    }
+
                     return;
                 }
 
@@ -315,9 +343,21 @@ impl Hub {
                 peer_service_name: target_service_name.clone(),
             }
             .into_message(request.seq());
-            self.client(&requester_service_name)
-                .send_connection_fd(message, &target_service_name, left)
-                .await;
+
+            match self.clients.get_mut(&requester_service_name) {
+                Some(client) => {
+                    client
+                        .send_connection_fd(message, &target_service_name, left)
+                        .await;
+                }
+                _ => {
+                    warn!(
+                        "Failed to lookup `{}` service. Asumming disconnected",
+                        requester_service_name
+                    );
+                    return;
+                }
+            }
         }
 
         // Send descriptor to the target service
@@ -326,9 +366,22 @@ impl Hub {
             peer_service_name: requester_service_name.clone(),
         }
         .into_message(request.seq());
-        self.client(&target_service_name)
-            .send_connection_fd(message, &requester_service_name, right)
-            .await;
+
+        match self.clients.get_mut(&requester_service_name) {
+            Some(client) => {
+                client
+                    .send_connection_fd(message, &requester_service_name, right)
+                    .await;
+            }
+            _ => {
+                warn!(
+                    "Failed to lookup `{}` service. Asumming disconnected",
+                    requester_service_name
+                );
+
+                return;
+            }
+        }
 
         info!(
             "Succesfully connected `{}` to `{}`",
