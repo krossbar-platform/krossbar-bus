@@ -367,7 +367,7 @@ impl Hub {
         }
         .into_message(request.seq());
 
-        match self.clients.get_mut(&requester_service_name) {
+        match self.clients.get_mut(target_service_name) {
             Some(client) => {
                 client
                     .send_connection_fd(message, &requester_service_name, right)
