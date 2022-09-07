@@ -48,7 +48,7 @@ type MethodCall = (Bson, OneSender<Response>);
 #[derive(Clone)]
 pub struct Bus {
     /// Own service name
-    service_name: Shared<String>,
+    service_name: String,
     /// Connected services. All these connections are p2p
     peers: Arc<TokioRwLock<HashMap<String, Peer>>>,
     /// Registered methods. Sender is used to send parameters and
@@ -71,8 +71,8 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn service_name(&self) -> String {
-        self.service_name.read().unwrap().clone()
+    pub fn service_name(&self) -> &String {
+        &self.service_name
     }
 
     /// Register service. Tries to register the service at the hub. The method may fail registering
@@ -85,7 +85,7 @@ impl Bus {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
 
         let mut this = Self {
-            service_name: Arc::new(RwLock::new(service_name.into())),
+            service_name: service_name.into(),
             peers: Arc::new(TokioRwLock::new(HashMap::new())),
             methods: Arc::new(RwLock::new(HashMap::new())),
             signals: Arc::new(RwLock::new(HashMap::new())),
@@ -620,7 +620,7 @@ impl Bus {
         // Create new service connection handle. Can be used to handle own
         // connection requests by just returning already existing handle
         let mut new_service_connection = Peer::new(
-            self.service_name.read().unwrap().clone(),
+            self.service_name.clone(),
             peer_service_name.into(),
             stream,
             self.task_tx.clone(),
@@ -649,7 +649,7 @@ impl Bus {
             "monitor".into(),
             stream,
             self.task_tx.clone(),
-            self.service_name.read().unwrap().clone(),
+            self.service_name.clone(),
             false,
         )));
 
@@ -665,7 +665,7 @@ impl Bus {
     pub async fn close(&mut self) {
         debug!(
             "Shutting down service connection for `{}`",
-            self.service_name.read().unwrap()
+            self.service_name
         );
 
         let _ = self.shutdown_tx.send(()).await;

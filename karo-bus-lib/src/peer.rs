@@ -1,9 +1,4 @@
-use std::{
-    error::Error,
-    fmt::Debug,
-    future::Future,
-    sync::{Arc, RwLock},
-};
+use std::{error::Error, fmt::Debug, future::Future, sync::Arc};
 
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
@@ -25,8 +20,6 @@ use karo_bus_common::{
     messages::{self, IntoMessage, Message, MessageBody, Response},
 };
 
-type Shared<T> = Arc<RwLock<T>>;
-
 enum TaskMessage {
     Message(Message),
     Monitor(Arc<TokioRwLock<PeerConnection>>),
@@ -45,9 +38,9 @@ impl Debug for TaskMessage {
 #[derive(Clone)]
 pub struct Peer {
     /// Own service name
-    service_name: Shared<String>,
+    service_name: String,
     /// Peer service name
-    peer_service_name: Shared<String>,
+    peer_service_name: String,
     /// Sender to forward calls to the service
     service_tx: TaskChannel,
     /// Sender to make calls into the task
@@ -75,8 +68,8 @@ impl Peer {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
 
         let mut this = Self {
-            service_name: Arc::new(RwLock::new(service_name.clone())),
-            peer_service_name: Arc::new(RwLock::new(peer_service_name.clone())),
+            service_name: service_name.clone(),
+            peer_service_name: peer_service_name.clone(),
             service_tx: service_tx.clone(),
             task_tx,
             shutdown_tx,
@@ -142,8 +135,8 @@ impl Peer {
         result
     }
 
-    pub fn name(&self) -> String {
-        self.service_name.read().unwrap().clone()
+    pub fn name(&self) -> &String {
+        &self.service_name
     }
 
     /// Remote method call\
@@ -154,11 +147,7 @@ impl Peer {
         method_name: &str,
         params: &P,
     ) -> crate::Result<R> {
-        let message = Message::new_call(
-            self.peer_service_name.read().unwrap().clone(),
-            method_name.into(),
-            params,
-        );
+        let message = Message::new_call(self.peer_service_name.clone(), method_name.into(), params);
 
         // Send method call request
         let response = utils::call_task(&self.task_tx, TaskMessage::Message(message)).await;
@@ -179,7 +168,7 @@ impl Peer {
                 MessageBody::Response(Response::Error(err)) => {
                     warn!(
                         "Failed to perform a call to `{}::{}`: {}",
-                        self.peer_service_name.read().unwrap(),
+                        self.peer_service_name,
                         method_name,
                         err.to_string()
                     );
@@ -210,10 +199,7 @@ impl Peer {
         T: DeserializeOwned + Send,
         Ret: Future<Output = ()> + Send,
     {
-        let message = Message::new_subscription(
-            self.service_name.read().unwrap().clone(),
-            signal_name.into(),
-        );
+        let message = Message::new_subscription(self.service_name.clone(), signal_name.into());
 
         let (response, rx) = self.make_subscription_call(message, signal_name).await?;
 
@@ -246,8 +232,7 @@ impl Peer {
         T: DeserializeOwned + Send,
         Ret: Future<Output = ()> + Send,
     {
-        let message =
-            Message::new_watch(self.service_name.read().unwrap().clone(), state_name.into());
+        let message = Message::new_watch(self.service_name.clone(), state_name.into());
 
         let (response, rx) = self.make_subscription_call(message, state_name).await?;
 
@@ -299,7 +284,7 @@ impl Peer {
             MessageBody::Response(Response::Error(err)) => {
                 warn!(
                     "Failed to subscribe to `{}::{}`: {}",
-                    self.peer_service_name.read().unwrap(),
+                    self.peer_service_name,
                     signal_name,
                     err.to_string()
                 );
@@ -443,10 +428,10 @@ impl Peer {
 
     /// Close peer connection
     pub async fn close(&mut self) {
-        let self_name = self.peer_service_name.read().unwrap().clone();
+        let self_name = self.peer_service_name.clone();
         debug!(
             "Shutting down peer connection to `{}`",
-            self.peer_service_name.read().unwrap()
+            self.peer_service_name
         );
 
         let _ = utils::call_task(
@@ -458,10 +443,7 @@ impl Peer {
 
 impl Drop for Peer {
     fn drop(&mut self) {
-        trace!(
-            "Peer `{}` connection dropped",
-            self.peer_service_name.read().unwrap()
-        );
+        trace!("Peer `{}` connection dropped", self.peer_service_name);
 
         let shutdown_tx = self.shutdown_tx.clone();
 
@@ -473,10 +455,6 @@ impl Drop for Peer {
 
 impl Debug for Peer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Peer connection to {}",
-            self.peer_service_name.read().unwrap()
-        )
+        write!(f, "Peer connection to {}", self.peer_service_name)
     }
 }
