@@ -1,5 +1,11 @@
-use std::{error::Error, fmt::Debug, future::Future, sync::Arc};
+use std::{
+    error::Error,
+    fmt::Debug,
+    future::Future,
+    sync::{atomic::AtomicBool, Arc},
+};
 
+use karo_common_rpc::rpc_sender::RpcSender;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
@@ -11,28 +17,11 @@ use tokio::{
     },
 };
 
-use crate::{
-    peer_connection::PeerConnection,
-    utils::{self, dummy_tx, TaskChannel},
-};
+use crate::utils::{self, dummy_tx, TaskChannel};
 use karo_bus_common::{
     errors::Error as BusError,
     messages::{self, IntoMessage, Message, MessageBody, Response},
 };
-
-enum TaskMessage {
-    Message(Message),
-    Monitor(Arc<TokioRwLock<PeerConnection>>),
-}
-
-impl Debug for TaskMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TaskMessage::Message(message) => write!(f, "Message({:?})", message),
-            TaskMessage::Monitor(_) => write!(f, "Monitor()"),
-        }
-    }
-}
 
 /// P2p service connection handle
 #[derive(Clone)]
@@ -43,10 +32,16 @@ pub struct Peer {
     peer_service_name: String,
     /// Sender to forward calls to the service
     service_tx: TaskChannel,
-    /// Sender to make calls into the task
-    task_tx: Sender<(TaskMessage, Sender<Message>)>,
+    /// Peer sender, which can be given to a client to send message to the peer
+    sender: RpcSender,
+    /// We reconnect only to the outgoing peer connections. This is passed to the connector.
+    /// This value can change, because we can start subscribing to a service, which
+    /// previously initiated connection.
+    outgoing: Arc<AtomicBool>,
     /// Sender to shutdown peer connection
     shutdown_tx: Sender<()>,
+    /// Monitor connection
+    monitor: Option<RpcSender>,
 }
 
 impl Peer {
@@ -424,6 +419,43 @@ impl Peer {
             .task_tx
             .send((TaskMessage::Monitor(monitor_connection), dummy_tx()))
             .await;
+    }
+
+    /// Send message to the Karo monitor if connected
+    async fn send_monitor_message(
+        &mut self,
+        message: &Message,
+        direction: MonitorMessageDirection,
+    ) {
+        let (sender, receiver) = match direction {
+            MonitorMessageDirection::Outgoing => (self.service_name.clone(), self.name.clone()),
+            MonitorMessageDirection::Incoming => (self.name.clone(), self.service_name.clone()),
+        };
+
+        if let Some(ref monitor) = self.monitor {
+            // First we make monitor message, which will be sent as method call parameter...
+            let monitor_message = MonitorMessage::new(sender, receiver, &message, direction);
+
+            // ..And to call monitor method, we need
+            let method_call = Message::new_call(
+                self.service_name.clone(),
+                MONITOR_METHOD.into(),
+                &monitor_message,
+            );
+
+            trace!("Sending monitor message: {:?}", message);
+
+            if monitor
+                .write()
+                .await
+                .write_message(method_call, dummy_tx())
+                .await
+                .is_none()
+            {
+                debug!("Monitor disconnected");
+                self.monitor = None;
+            }
+        }
     }
 
     /// Close peer connection

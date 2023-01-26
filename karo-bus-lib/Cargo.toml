@@ -7,6 +7,7 @@ edition = "2021"
 simple-peer = []
 
 [dependencies]
+anyhow = "1"
 async-trait = "0.1"
 async-recursion = "1.0"
 bson = "2.3"
@@ -17,6 +18,9 @@ tokio-send-fd = "0.9"
 serde = "1.0"
 
 karo-bus-common = { path = "../karo-bus-common" }
+karo-common-rpc = { git = "https://github.com/karo-platform/karo-common.git" }
+karo-common-messages = { git = "https://github.com/karo-platform/karo-common.git" }
+karo-common-connection = { git = "https://github.com/karo-platform/karo-common.git" }
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
