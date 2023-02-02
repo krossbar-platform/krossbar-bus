@@ -1,7 +1,6 @@
 use bson::Bson;
+use karo_common_messages::Message;
 use serde::{Deserialize, Serialize};
-
-use crate::messages::Message;
 
 pub const MONITOR_SERVICE_NAME: &str = "karo.bus.monitor";
 pub const MONITOR_METHOD: &str = "message";
@@ -33,7 +32,7 @@ impl MonitorMessage {
         Self {
             sender,
             receiver,
-            message: bson::to_bson(message).unwrap(),
+            message: message.into(),
             direction,
         }
     }

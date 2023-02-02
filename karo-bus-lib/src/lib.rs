@@ -1,7 +1,7 @@
 pub mod bus;
 mod hub_connection;
 pub mod peer;
-mod peer_connection;
+mod peer_connector;
 pub mod signal;
 #[cfg(feature = "simple-peer")]
 pub mod simple_peer;

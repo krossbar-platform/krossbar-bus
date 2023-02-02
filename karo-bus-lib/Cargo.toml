@@ -15,6 +15,7 @@ bytes = "1.1"
 log = "0.4"
 tokio = { version = "1.19", features = ["sync", "io-util", "net", "time"] }
 tokio-send-fd = "0.9"
+tokio-stream = "0.1"
 serde = "1.0"
 
 karo-bus-common = { path = "../karo-bus-common" }
