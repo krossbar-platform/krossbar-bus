@@ -1,5 +1,6 @@
 pub mod bus;
 mod hub_connection;
+mod monitor;
 pub mod peer;
 mod peer_connector;
 pub mod signal;

@@ -5,27 +5,18 @@ use std::{
 
 use anyhow::{Context, Result};
 use bson::Bson;
-use karo_common_rpc::{rpc_connection::RpcConnection, rpc_sender::RpcSender};
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     net::UnixStream,
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        Mutex,
-    },
+    sync::mpsc::{self, Receiver, Sender},
 };
 use tokio_stream::{Stream, StreamExt};
 
-use karo_bus_common::{
-    errors::Error as BusError,
-    monitor::{MonitorMessage, MonitorMessageDirection},
-};
+use karo_common_messages::{Error, Message as MessageBody, Response};
+use karo_common_rpc::{rpc_connection::RpcConnection, rpc_sender::RpcSender, Message};
 
-use karo_common_messages::{Message as MessageBody, Response};
-use karo_common_rpc::Message;
-
-use crate::peer_connector::PeerConnector;
+use crate::{monitor::Monitor, peer_connector::PeerConnector};
 
 /// P2p service connection handle
 #[derive(Clone)]
@@ -43,7 +34,7 @@ pub struct Peer {
     /// Sender to shutdown peer connection
     shutdown_tx: Sender<()>,
     /// Monitor connection
-    monitor: Arc<Mutex<Option<RpcSender>>>,
+    monitor: Monitor,
 }
 
 impl Peer {
@@ -90,11 +81,8 @@ impl Peer {
 
         let peer_sender = rpc_connection.sender();
 
-        let monitor = Arc::new(Mutex::new(None));
-
         Self::start_task(
             rpc_connection,
-            monitor.clone(),
             shutdown_rx,
             interface_tx,
             service_name.clone(),
@@ -107,13 +95,12 @@ impl Peer {
             outgoing,
             peer_sender,
             shutdown_tx,
-            monitor,
+            monitor: Monitor::new(service_name.clone(), peer_service_name.clone()),
         })
     }
 
     async fn start_task(
         mut rpc_connection: RpcConnection,
-        monitor: Arc<Mutex<Option<RpcSender>>>,
         mut shutdown_rx: Receiver<()>,
         interface_tx: Sender<(RpcSender, Message)>,
         service_name: String,
@@ -133,12 +120,6 @@ impl Peer {
                         match incoming_message {
                             Ok(message) => {
                                 let internal_message = message.body();
-
-                                Self::send_monitor_message(&monitor,
-                                    &internal_message,
-                                    MonitorMessageDirection::Incoming,
-                                    &service_name,
-                                    &peer_service_name).await;
 
                                 if matches!(internal_message, MessageBody::Response(Response::Shutdown(_))) {
                                     warn!("Peer connection closed. Shutting him down");
@@ -183,16 +164,16 @@ impl Peer {
             MessageBody::new_call(self.peer_service_name.clone(), method_name.into(), params);
 
         // Send method call request
-        let response = self.peer_sender.call(&message).await?;
+        let response: MessageBody = self.peer_sender.call(&message).await?.body();
 
-        match response.body() {
+        match response {
             // Succesfully performed remote method call
             MessageBody::Response(Response::Return(data)) => {
                 match bson::from_bson::<R>(data.clone()) {
                     Ok(data) => Ok(data),
                     Err(err) => {
                         error!("Can't deserialize method response: {}", err.to_string());
-                        Err(BusError::InvalidResponse.into())
+                        Err(Error::InvalidResponse.into())
                     }
                 }
             }
@@ -209,7 +190,7 @@ impl Peer {
             // Invalid protocol
             r => {
                 error!("Invalid Ok response for a method call: {:?}", r);
-                Err(BusError::InvalidMessage.into())
+                Err(Error::InvalidMessage.into())
             }
         }
     }
@@ -224,13 +205,14 @@ impl Peer {
 
         let mut subscription_stream = self.peer_sender.subscribe(&message).await?;
 
-        // Match first message
-        match subscription_stream
+        let subscription_response: MessageBody = subscription_stream
             .next()
             .await
             .context("Subscription stream unexpectedly closed")?
-            .body()
-        {
+            .body();
+
+        // Match first message
+        match subscription_response {
             // Succesfully performed remote method call
             MessageBody::Response(Response::Ok) => {
                 debug!("Succesfully subscribed to the signal `{}`", signal_name);
@@ -252,7 +234,7 @@ impl Peer {
             // Invalid protocol
             r => {
                 error!("Invalid Ok response for a signal subscription: {:?}", r);
-                Err(BusError::InvalidMessage.into())
+                Err(Error::InvalidMessage.into())
             }
         }
     }
@@ -293,47 +275,9 @@ impl Peer {
             // Invalid protocol
             r => {
                 error!("Invalid Ok response for a signal subscription: {:?}", r);
-                Err(BusError::InvalidMessage.into())
+                Err(Error::InvalidMessage.into())
             }
         }
-    }
-
-    /// Set monitor handle
-    pub(crate) async fn set_monitor(&mut self, monitor: RpcSender) {
-        *self.monitor.lock().await = Some(monitor);
-    }
-
-    /// Send message to the Karo monitor if connected
-    async fn send_monitor_message(
-        monitor: &Arc<Mutex<Option<RpcSender>>>,
-        message: &MessageBody,
-        direction: MonitorMessageDirection,
-        self_name: &String,
-        peer_name: &String,
-    ) {
-        let ref mut monitor = *monitor.lock().await;
-        if let Some(monitor) = monitor {
-            let (sender, receiver) = match direction {
-                MonitorMessageDirection::Outgoing => (self_name.clone(), peer_name.clone()),
-                MonitorMessageDirection::Incoming => (peer_name.clone(), self_name.clone()),
-            };
-
-            // First we make monitor message, which will be sent as method call parameter...
-            let monitor_message = MonitorMessage::new(sender, receiver, message, direction);
-
-            trace!("Sending monitor message: {:?}", message);
-            // ..And to call monitor method, we need
-            if monitor.call(&message).await.is_err() {
-                // Return here if succesfully sent, otherwise reset monitor connection
-                return;
-            }
-        } else {
-            return;
-        }
-
-        // If reached here, we've failed to send monitor message
-        debug!("Monitor disconnected");
-        monitor.take();
     }
 
     /// Close peer connection
