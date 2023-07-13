@@ -9,8 +9,7 @@ use karo_common_messages::{Message, Response};
 use log::*;
 use tokio::net::UnixStream;
 
-use karo_common_connection::connector::Connector;
-use karo_common_rpc::rpc_sender::RpcSender;
+use karo_common_rpc::{rpc_connector::RpcConnector, rpc_sender::RpcSender};
 
 /// Peer connector to request peer connection from the hub
 pub struct PeerConnector {
@@ -44,7 +43,7 @@ impl PeerConnector {
 }
 
 #[async_trait]
-impl Connector for PeerConnector {
+impl RpcConnector for PeerConnector {
     async fn connect(&self) -> Result<UnixStream> {
         // Incoming connection already has a stream received from the hub
         if let Some(incoming_stream) = self.incoming_stream.take() {

@@ -14,9 +14,17 @@ use tokio::{
 use tokio_stream::{Stream, StreamExt};
 
 use karo_common_messages::{Error, Message as MessageBody, Response};
-use karo_common_rpc::{rpc_connection::RpcConnection, rpc_sender::RpcSender, Message};
+use karo_common_rpc::{
+    rpc_connection::RpcConnection, rpc_sender::RpcSender, Message as MessageHandle,
+};
 
 use crate::{monitor::Monitor, peer_connector::PeerConnector};
+
+/// A command from outside into the loop
+enum CommandType {
+    Monitor(Monitor),
+    Shutdown,
+}
 
 /// P2p service connection handle
 #[derive(Clone)]
@@ -31,10 +39,8 @@ pub struct Peer {
     outgoing: Arc<AtomicBool>,
     /// Sender into the socket to return to the client
     peer_sender: RpcSender,
-    /// Sender to shutdown peer connection
-    shutdown_tx: Sender<()>,
-    /// Monitor connection
-    monitor: Monitor,
+    /// Sender to shutdown peer connection or set monitor
+    command_tx: Sender<CommandType>,
 }
 
 impl Peer {
@@ -46,7 +52,7 @@ impl Peer {
         service_name: String,
         peer_service_name: String,
         incoming_stream: Option<UnixStream>,
-        interface_tx: Sender<(RpcSender, Message)>,
+        endpoints_tx: Sender<MessageHandle>,
         hub_writer: RpcSender,
     ) -> Result<Self> {
         // If we have an incoming stream, we don't reconnect
@@ -66,7 +72,7 @@ impl Peer {
             peer_service_name
         );
 
-        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let (command_tx, command_rx) = mpsc::channel(1);
 
         // Peer connector, which will connect to the peer if this is and outgoing connection
         let connector = Box::new(PeerConnector::new(
@@ -83,8 +89,8 @@ impl Peer {
 
         Self::start_task(
             rpc_connection,
-            shutdown_rx,
-            interface_tx,
+            command_rx,
+            endpoints_tx,
             service_name.clone(),
             peer_service_name.clone(),
         );
@@ -94,20 +100,17 @@ impl Peer {
             peer_service_name: peer_service_name.clone(),
             outgoing,
             peer_sender,
-            shutdown_tx,
-            monitor: Monitor::new(service_name.clone(), peer_service_name.clone()),
+            command_tx,
         })
     }
 
     async fn start_task(
         mut rpc_connection: RpcConnection,
-        mut shutdown_rx: Receiver<()>,
-        interface_tx: Sender<(RpcSender, Message)>,
+        mut shutdown_rx: Receiver<CommandType>,
+        endpoints_tx: Sender<MessageHandle>,
         service_name: String,
         peer_service_name: String,
     ) {
-        let mut peer_sender = rpc_connection.sender();
-
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -119,14 +122,12 @@ impl Peer {
                     incoming_message = rpc_connection.read() => {
                         match incoming_message {
                             Ok(message) => {
-                                let internal_message = message.body();
-
-                                if matches!(internal_message, MessageBody::Response(Response::Shutdown(_))) {
+                                if matches!(message.body(), MessageBody::Response(Response::Shutdown(_))) {
                                     warn!("Peer connection closed. Shutting him down");
                                     return;
                                 } else {
                                     // This is an incoming message. Send it to the interfaces
-                                    if interface_tx.send((peer_sender.clone(), message)).await.is_err() {
+                                    if endpoints_tx.send(message).await.is_err() {
                                         warn!("Peer connection closed. Shutting down");
                                         return;
                                     }
@@ -138,10 +139,15 @@ impl Peer {
                             }
                         }
                     },
-                    Some(_) = shutdown_rx.recv() => {
-                        let message: MessageBody = Response::Shutdown("Shutdown".into()).into();
-                        peer_sender.send(message.into());
-                        return;
+                    Some(message) = shutdown_rx.recv() => {
+                        match message {
+                            CommandType::Monitor(monitor) => rpc_connection.set_monitor(Box::new(monitor)),
+                            CommandType::Shutdown => {
+                                let message: MessageBody = Response::Shutdown("Shutdown".into()).into();
+                                rpc_connection.sender().send(message.into());
+                                return;
+                            }
+                        }
                     }
                 };
             }
@@ -280,6 +286,18 @@ impl Peer {
         }
     }
 
+    pub async fn set_monitor(&mut self, monitor: &Monitor) {
+        debug!(
+            "Incoming monitor connection for the peer {}",
+            self.peer_service_name
+        );
+
+        let new_mon_instance = monitor.clone_for_service(&self.peer_service_name.clone());
+        self.command_tx
+            .send(CommandType::Monitor(new_mon_instance))
+            .await;
+    }
+
     /// Close peer connection
     pub async fn close(&mut self) {
         let self_name = self.peer_service_name.clone();
@@ -288,7 +306,7 @@ impl Peer {
             self.peer_service_name
         );
 
-        self.shutdown_tx.send(()).await;
+        self.command_tx.send(CommandType::Shutdown).await;
     }
 }
 
@@ -296,10 +314,10 @@ impl Drop for Peer {
     fn drop(&mut self) {
         trace!("Peer `{}` connection dropped", self.peer_service_name);
 
-        let shutdown_tx = self.shutdown_tx.clone();
+        let shutdown_tx = self.command_tx.clone();
 
         tokio::spawn(async move {
-            let _ = shutdown_tx.send(()).await;
+            let _ = shutdown_tx.send(CommandType::Shutdown).await;
         });
     }
 }

@@ -6,8 +6,10 @@ use log::*;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use karo_common_connection::monitor::{MessageDirection, Monitor as ConnectionMonitor};
-use karo_common_rpc::rpc_sender::RpcSender;
+use karo_common_connection::{
+    connection::Connection,
+    monitor::{MessageDirection, Monitor as ConnectionMonitor},
+};
 
 /// Monitor message to send. Uses references for cheap construction
 #[derive(Serialize, Debug, Clone)]
@@ -26,21 +28,30 @@ pub struct MonitorMessage<'a> {
 pub(crate) struct Monitor {
     self_name: String,
     peer_name: String,
-    sender: Arc<Mutex<Option<RpcSender>>>,
+    sender: Arc<Mutex<Option<Connection>>>,
 }
 
 impl Monitor {
-    pub fn new(self_name: String, peer_name: String) -> Self {
+    pub fn new(self_name: &str) -> Self {
         Self {
-            self_name,
-            peer_name,
+            self_name: self_name.into(),
+            peer_name: "".into(),
             sender: Arc::new(Mutex::new(None)),
         }
     }
 
+    // Clone monitor handle for a new service
+    pub fn clone_for_service(&self, peer_name: &str) -> Self {
+        Self {
+            self_name: self.self_name.clone(),
+            peer_name: peer_name.into(),
+            sender: self.sender.clone(),
+        }
+    }
+
     /// Set monitor handle
-    pub async fn set_monitor(&mut self, monitor: RpcSender) {
-        *self.sender.lock().await = Some(monitor);
+    pub async fn set_connection(&mut self, connection: Connection) {
+        *self.sender.lock().await = Some(connection);
     }
 }
 
@@ -64,7 +75,7 @@ impl ConnectionMonitor for Monitor {
 
             trace!("Sending monitor message: {:?}", message);
             // ..And to call monitor method, we need
-            if monitor.call(&message).await.is_err() {
+            if monitor.writer().write_bson(&message).await.is_err() {
                 // Return here if succesfully sent, otherwise reset monitor connection
                 return;
             }

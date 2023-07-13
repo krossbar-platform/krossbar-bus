@@ -3,9 +3,6 @@ name = "karo-bus-lib"
 version = "0.1.0"
 edition = "2021"
 
-[features]
-simple-peer = []
-
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
