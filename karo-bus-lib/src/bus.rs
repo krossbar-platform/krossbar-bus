@@ -25,7 +25,12 @@ use karo_common_rpc::{
     rpc_connection::RpcConnection, rpc_sender::RpcSender, Message as MessageHandle,
 };
 
-use crate::{hub::Hub, monitor::Monitor, peer::Peer, signal::Signal, state::State};
+use crate::{
+    endpoints::{signal::Signal, state::State},
+    hub::Hub,
+    monitor::Monitor,
+    peer::Peer,
+};
 
 use karo_bus_common::{
     connect::InspectData,

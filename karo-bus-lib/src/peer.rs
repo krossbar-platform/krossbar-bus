@@ -5,11 +5,15 @@ use std::{
 
 use anyhow::{Context, Result};
 use bson::Bson;
+use karo_bus_common::messages::Message;
 use log::*;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{
     net::UnixStream,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        broadcast::Receiver as BroadcastReceiver,
+        mpsc::{self, Receiver, Sender},
+    },
 };
 use tokio_stream::{Stream, StreamExt};
 
@@ -284,6 +288,36 @@ impl Peer {
                 Err(Error::InvalidMessage.into())
             }
         }
+    }
+
+    /// Start subscription task, which polls signal Receiver and sends peer message
+    /// if emited
+    pub(crate) fn start_signal_sending_task(
+        &self,
+        mut signal_receiver: BroadcastReceiver<Message>,
+        seq: u64,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                // Wait for signal emission
+                match signal_receiver.recv().await {
+                    Ok(mut message) => {
+                        // Replace seq with subscription seq
+                        message.update_seq(seq);
+
+                        // Call self task to send signal message
+                        if let Err(_) = self.peer_sender.send(message).await {
+                            warn!("Failed to send signal to a subscriber. Probably closed. Removing subscriber");
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        error!("Signal receiver error: {:?}", err);
+                        return;
+                    }
+                }
+            }
+        });
     }
 
     pub async fn set_monitor(&mut self, monitor: &Monitor) {
