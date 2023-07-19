@@ -7,7 +7,7 @@ use rustyline::error::ReadlineError;
 use rustyline::{ColorMode, Config, Editor, Result};
 use serde_json::Value;
 
-use karo_bus_common::connect::CONNECT_SERVICE_NAME;
+use karo_bus_common::inspect_data::CONNECT_SERVICE_NAME;
 use karo_bus_lib::{peer::Peer, Bus};
 
 /// Karo bus connect
@@ -140,8 +140,8 @@ async fn handle_input_line(service: &mut Peer, line: &String) -> bool {
         }
     } else if words[0] == "inspect" {
         match service
-            .call::<(), karo_bus_common::connect::InspectData>(
-                karo_bus_common::connect::INSPECT_METHOD,
+            .call::<(), karo_bus_common::inspect_data::InspectData>(
+                karo_bus_common::inspect_data::INSPECT_METHOD,
                 &(),
             )
             .await

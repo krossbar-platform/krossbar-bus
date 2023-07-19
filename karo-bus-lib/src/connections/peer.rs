@@ -22,7 +22,9 @@ use karo_common_rpc::{
     rpc_connection::RpcConnection, rpc_sender::RpcSender, Message as MessageHandle,
 };
 
-use crate::{monitor::Monitor, peer_connector::PeerConnector};
+use crate::monitor::Monitor;
+
+use super::peer_connector::PeerConnector;
 
 /// A command from outside into the loop
 enum CommandType {
@@ -306,7 +308,11 @@ impl Peer {
                         message.update_seq(seq);
 
                         // Call self task to send signal message
-                        if let Err(_) = self.peer_sender.send(message).await {
+                        if let Err(_) = self
+                            .peer_sender
+                            .send(bson::to_bson(&message).unwrap())
+                            .await
+                        {
                             warn!("Failed to send signal to a subscriber. Probably closed. Removing subscriber");
                             return;
                         }

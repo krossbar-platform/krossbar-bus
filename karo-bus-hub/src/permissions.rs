@@ -10,7 +10,7 @@ use log::*;
 use tokio::net::unix::UCred;
 
 use karo_bus_common::{
-    connect::CONNECT_SERVICE_NAME, errors::Error as BusError, monitor::MONITOR_SERVICE_NAME,
+    errors::Error as BusError, inspect_data::CONNECT_SERVICE_NAME, monitor::MONITOR_SERVICE_NAME,
     service_names::NamePattern,
 };
 

@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use karo_common_rpc::{rpc_connection::RpcConnection, rpc_sender::RpcSender};
 
-use crate::hub_connector::HubConnector;
+use super::hub_connector::HubConnector;
 
 pub(crate) struct Hub {
     /// Own service name
