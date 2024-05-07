@@ -1,0 +1,4 @@
+{
+    "exec": "/data/krossbar/*",
+    "incoming_connections": ["**"]
+}

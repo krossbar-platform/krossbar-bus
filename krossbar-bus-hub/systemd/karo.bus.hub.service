@@ -1,0 +1,10 @@
+[Unit]
+Description=Krossbar platform bus hub
+
+[Service]
+ExecStart=/usr/bin/krossbar-bus-hub
+StandardOutput=journal
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
