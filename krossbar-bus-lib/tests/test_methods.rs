@@ -1,7 +1,7 @@
 use std::{env, path::Path, time::Duration};
 
 use json::JsonValue;
-use krossbar_bus_lib::client::Service;
+use krossbar_bus_lib::service::Service;
 use krossbar_hub_lib::{args::Args, hub::Hub};
 use log::LevelFilter;
 use tempdir::TempDir;

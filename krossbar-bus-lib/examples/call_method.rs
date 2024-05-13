@@ -1,4 +1,4 @@
-use krossbar_bus_lib::client::Service;
+use krossbar_bus_lib::service::Service;
 use log::{LevelFilter, *};
 use tokio;
 

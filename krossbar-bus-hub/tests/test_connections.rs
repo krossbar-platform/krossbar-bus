@@ -2,7 +2,7 @@ use std::{env, path::Path, time::Duration};
 
 use json::JsonValue;
 use krossbar_bus_common::HUB_SOCKET_PATH_ENV;
-use krossbar_bus_lib::client::Service;
+use krossbar_bus_lib::service::Service;
 use log::LevelFilter;
 use tempdir::TempDir;
 use tokio::{fs::OpenOptions, io::AsyncWriteExt, time};
