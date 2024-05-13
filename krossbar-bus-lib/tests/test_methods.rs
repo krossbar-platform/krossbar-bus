@@ -1,42 +1,40 @@
 use std::{env, path::Path, time::Duration};
 
 use json::JsonValue;
+use krossbar_bus_lib::client::Service;
+use krossbar_hub_lib::{args::Args, hub::Hub};
 use log::LevelFilter;
 use tempdir::TempDir;
-use tokio::{
-    fs::OpenOptions,
-    io::AsyncWriteExt,
-    sync::mpsc::{self, Sender},
-    time,
-};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, time};
 
 use krossbar_bus_common::HUB_SOCKET_PATH_ENV;
-use krossbar_bus_hub::{args::Args, hub::Hub};
-use krossbar_bus_lib::Bus;
+use tokio_util::sync::CancellationToken;
 
-async fn start_hub(socket_path: &str, service_files_dir: &str) -> Sender<()> {
+async fn start_hub(socket_path: &str, service_files_dir: &str) -> CancellationToken {
     env::set_var(HUB_SOCKET_PATH_ENV, socket_path);
 
     let args = Args {
         log_level: LevelFilter::Debug,
-        service_files_dir: service_files_dir.into(),
+        additional_service_dirs: vec![service_files_dir.to_owned()],
     };
 
-    // let _ = pretty_env_logger::formatted_builder()
-    //     .filter_level(args.log_level)
-    //     .try_init();
+    let _ = pretty_env_logger::formatted_builder()
+        .filter_level(args.log_level)
+        .try_init();
 
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-
+    let cancel_token = CancellationToken::new();
+    let token = cancel_token.clone();
     tokio::spawn(async move {
-        let mut hub = Hub::new(args, shutdown_rx);
-        hub.run().await.expect("Failed to run hub");
+        tokio::select! {
+            _ = Hub::new(args).run() => {}
+            _ = cancel_token.cancelled() => {}
+        }
 
         println!("Shutting hub down");
     });
 
     println!("Succesfully started hub socket");
-    shutdown_tx
+    token
 }
 
 async fn write_service_file(service_dir: &Path, service_name: &str, content: JsonValue) {
@@ -57,7 +55,8 @@ async fn write_service_file(service_dir: &Path, service_name: &str, content: Jso
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_methods() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -68,7 +67,7 @@ async fn test_methods() {
 
     let service_dir = TempDir::new("test_method_calls").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(
+    let cancel_token = start_hub(
         &socket_path,
         service_dir.path().as_os_str().to_str().unwrap(),
     )
@@ -90,14 +89,15 @@ async fn test_methods() {
     let register_service_name = "com.register_method";
     write_service_file(service_dir.path(), register_service_name, service_file_json).await;
 
-    let mut bus1 = Bus::register(register_service_name)
+    let mut service1 = Service::new(register_service_name)
         .await
         .expect("Failed to register service");
 
-    bus1.register_method("method", |value: i32| async move {
-        return format!("Hello, {}", value);
-    })
-    .expect("Failed to register method");
+    service1
+        .register_method("method", |value: i32| async move {
+            return format!("Hello, {}", value);
+        })
+        .expect("Failed to register method");
 
     // Create service file first
     let service_file_json = json::parse(
@@ -113,11 +113,11 @@ async fn test_methods() {
     let service_name = "com.call_method";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let mut bus2 = Bus::register(service_name)
+    let mut service2 = Service::new(service_name)
         .await
         .expect("Failed to register service");
 
-    let peer = bus2
+    let peer = service2
         .connect(register_service_name)
         .await
         .expect("Failed to connect to the target service");
@@ -145,8 +145,5 @@ async fn test_methods() {
         "Hello, 42"
     );
 
-    shutdown_tx
-        .send(())
-        .await
-        .expect("Failed to send shutdown request to the hub");
+    cancel_token.cancel()
 }

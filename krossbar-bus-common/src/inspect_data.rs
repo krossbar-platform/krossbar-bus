@@ -3,8 +3,6 @@ use std::fmt::Display;
 use colored::*;
 use serde::{Deserialize, Serialize};
 
-pub const CONNECT_SERVICE_NAME: &str = "krossbar.bus.connect";
-
 pub const INSPECT_METHOD: &str = "inspect";
 
 #[derive(Serialize, Deserialize)]

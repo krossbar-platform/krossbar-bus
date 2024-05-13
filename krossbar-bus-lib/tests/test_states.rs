@@ -1,47 +1,41 @@
-use std::{
-    env,
-    path::Path,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{env, path::Path, time::Duration};
 
+use futures::StreamExt;
 use json::JsonValue;
+use krossbar_bus_lib::client::Service;
+use krossbar_hub_lib::{args::Args, hub::Hub};
 use log::LevelFilter;
 use tempdir::TempDir;
-use tokio::{
-    fs::OpenOptions,
-    io::AsyncWriteExt,
-    sync::mpsc::{self, Sender},
-    time,
-};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, time};
 
 use krossbar_bus_common::HUB_SOCKET_PATH_ENV;
-use krossbar_bus_hub::{args::Args, hub::Hub};
-use krossbar_bus_lib::Bus;
+use tokio_util::sync::CancellationToken;
 
-async fn start_hub(socket_path: &str, service_files_dir: &str) -> Sender<()> {
+async fn start_hub(socket_path: &str, service_files_dir: &str) -> CancellationToken {
     env::set_var(HUB_SOCKET_PATH_ENV, socket_path);
 
     let args = Args {
         log_level: LevelFilter::Debug,
-        service_files_dir: service_files_dir.into(),
+        additional_service_dirs: vec![service_files_dir.to_owned()],
     };
 
-    // let _ = pretty_env_logger::formatted_builder()
-    //     .filter_level(args.log_level)
-    //     .try_init();
+    let _ = pretty_env_logger::formatted_builder()
+        .filter_level(args.log_level)
+        .try_init();
 
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-
+    let cancel_token = CancellationToken::new();
+    let token = cancel_token.clone();
     tokio::spawn(async move {
-        let mut hub = Hub::new(args, shutdown_rx);
-        hub.run().await.expect("Failed to run hub");
+        tokio::select! {
+            _ = Hub::new(args).run() => {}
+            _ = cancel_token.cancelled() => {}
+        }
 
         println!("Shutting hub down");
     });
 
     println!("Succesfully started hub socket");
-    shutdown_tx
+    token
 }
 
 async fn write_service_file(service_dir: &Path, service_name: &str, content: JsonValue) {
@@ -61,8 +55,9 @@ async fn write_service_file(service_dir: &Path, service_name: &str, content: Jso
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_states() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+async fn test_states_subscription() {
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -73,7 +68,7 @@ async fn test_states() {
 
     let service_dir = TempDir::new("test_states").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(
+    let cancel_token = start_hub(
         &socket_path,
         service_dir.path().as_os_str().to_str().unwrap(),
     )
@@ -86,7 +81,7 @@ async fn test_states() {
         r#"
             {
                 "exec": "/**/*",
-                "incoming_connections": ["com.watch_state"]
+                "incoming_connections": ["com.subscribe_on_state"]
             }
             "#,
     )
@@ -95,13 +90,15 @@ async fn test_states() {
     let register_service_name = "com.register_state";
     write_service_file(service_dir.path(), register_service_name, service_file_json).await;
 
-    let mut bus1 = Bus::register(register_service_name)
+    let mut service1 = Service::new(register_service_name)
         .await
         .expect("Failed to register service");
 
-    let mut state = bus1
-        .register_state::<i32>("state", 42)
-        .expect("Failed to register signal");
+    let mut state = service1
+        .register_state::<i32>("state", 0)
+        .expect("Failed to register state");
+
+    tokio::spawn(service1.run());
 
     // Create service file first
     let service_file_json = json::parse(
@@ -114,59 +111,161 @@ async fn test_states() {
     )
     .unwrap();
 
-    let service_name = "com.watch_state";
+    let service_name = "com.subscribe_on_state";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let mut bus2 = Bus::register(service_name)
+    let mut service2 = Service::new(service_name)
         .await
         .expect("Failed to register service");
 
-    let peer = bus2
+    let peer = service2
         .connect(register_service_name)
         .await
         .expect("Failed to connect to the target service");
 
-    // Value to be set on call back
-    let state_value = Arc::new(Mutex::new(0));
-    let state_value_clone = state_value.clone();
+    tokio::spawn(service2.run());
 
     // Invalid state
-    peer.watch("non_existing_state", |_: i32| async move {
-        panic!("This should never happen");
-    })
-    .await
-    .expect_err("Invalid state watch suceeded");
+    let mut non_existing_state = peer
+        .subscribe::<u32>("non_existing_state")
+        .await
+        .expect("Failed to send state subscription");
+    non_existing_state
+        .next()
+        .await
+        .unwrap()
+        .expect_err("Subscribed to a non-existing state");
 
     // Invalid param
-    peer.watch("state", |_: String| async move {
-        panic!("This should never happen");
-    })
-    .await
-    .expect_err("Got state with invalid type");
+    let mut bad_types_state = peer
+        .subscribe::<String>("state")
+        .await
+        .expect("Failed to subscribe to the state");
 
-    state.set(11);
     time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(*state_value.lock().unwrap(), 0);
+    bad_types_state
+        .next()
+        .await
+        .unwrap()
+        .expect_err("Valid state from int to String");
 
     // Valid subscriptions
-    assert_eq!(
-        peer.watch("state", move |value: i32| {
-            let state_value = state_value_clone.clone();
-            async move {
-                *state_value.lock().unwrap() = value;
-            }
-        })
+    let mut good_state = peer
+        .subscribe::<u32>("state")
         .await
-        .expect("Failed to watch state"),
-        11
+        .expect("Failed to subscribe to the state");
+
+    assert_eq!(
+        good_state
+            .next()
+            .await
+            .unwrap()
+            .expect("Good state never arrived"),
+        0
     );
 
-    state.set(42);
-    time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(*state_value.lock().unwrap(), 42);
+    state.set(42).await.unwrap();
 
-    shutdown_tx
-        .send(())
+    assert_eq!(
+        good_state
+            .next()
+            .await
+            .unwrap()
+            .expect("Good state never arrived"),
+        42
+    );
+
+    cancel_token.cancel()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_state_call() {
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_path: String = socket_dir
+        .path()
+        .join("krossbar_hub.socket")
+        .as_os_str()
+        .to_str()
+        .unwrap()
+        .into();
+
+    let service_dir = TempDir::new("test_state_calls").expect("Failed to create tempdir");
+
+    let cancel_token = start_hub(
+        &socket_path,
+        service_dir.path().as_os_str().to_str().unwrap(),
+    )
+    .await;
+    // Lets wait until hub starts
+    time::sleep(Duration::from_millis(10)).await;
+
+    // Create service file second
+    let service_file_json = json::parse(
+        r#"
+            {
+                "exec": "/**/*",
+                "incoming_connections": ["com.call_state"]
+            }
+            "#,
+    )
+    .unwrap();
+
+    let register_service_name = "com.register_state";
+    write_service_file(service_dir.path(), register_service_name, service_file_json).await;
+
+    let mut service1 = Service::new(register_service_name)
         .await
-        .expect("Failed to send shutdown request to the hub");
+        .expect("Failed to register service");
+
+    service1
+        .register_state("state", 42)
+        .expect("Failed to register method");
+
+    tokio::spawn(service1.run());
+
+    // Create service file first
+    let service_file_json = json::parse(
+        r#"
+        {
+            "exec": "/**/*",
+            "incoming_connections": []
+        }
+        "#,
+    )
+    .unwrap();
+
+    let service_name = "com.call_state";
+    write_service_file(service_dir.path(), service_name, service_file_json).await;
+
+    let mut service2 = Service::new(service_name)
+        .await
+        .expect("Failed to register service");
+
+    let peer = service2
+        .connect(register_service_name)
+        .await
+        .expect("Failed to connect to the target service");
+
+    tokio::spawn(service2.run());
+
+    // Invalid method
+    peer.call::<String, String>("non_existing_state", &"invalid_string".into())
+        .await
+        .expect_err("Invalid method call succeeded");
+
+    // Invalid return
+    peer.call::<(), String>("state", &())
+        .await
+        .expect_err("Invalid param method call succeeded");
+
+    // Valid call
+    assert_eq!(
+        peer.call::<(), i32>("state", &())
+            .await
+            .expect("Failed to make a valid call"),
+        42
+    );
+
+    cancel_token.cancel()
 }

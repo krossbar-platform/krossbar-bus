@@ -1,409 +1,384 @@
-use std::{collections::HashMap, fs, os::unix::prelude::PermissionsExt, sync::Arc};
+use std::{collections::HashMap, fs, os::unix::fs::PermissionsExt, pin::Pin, sync::Arc};
+
+use futures::{
+    future::{pending, FutureExt as _},
+    lock::Mutex,
+    select,
+    stream::FuturesUnordered,
+    Future, StreamExt as _,
+};
+use log::{debug, info, warn};
+use tokio::net::{unix::UCred, UnixListener, UnixStream};
 
 use krossbar_bus_common::{
-    self as common,
-    errors::Error as BusError,
-    messages::{IntoMessage, Message, MessageBody, Response, ServiceMessage},
+    get_hub_socket_path, message::HubMessage, HUB_CONNECT_METHOD, HUB_REGISTER_METHOD,
 };
-use log::*;
-use tokio::{
-    net::{UnixListener, UnixStream},
-    sync::mpsc::{self, Receiver, Sender},
-};
-use uuid::Uuid;
+use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
 
-use crate::{args::Args, client::Client, permissions::Permissions};
+use crate::{args::Args, permissions::Permissions};
 
-struct PendingConnectionRequest {
-    requester_service_name: String,
-    request: Message,
-}
+type TasksMapType = FuturesUnordered<Pin<Box<dyn Future<Output = Option<String>> + Send>>>;
+type ContextType = Arc<Mutex<HubContext>>;
 
-/// Incoming client request
-#[derive(Debug)]
-pub struct ClientRequest {
-    /// Client unique id
-    pub uuid: Uuid,
-    /// Client service name. Can be empty if not registered yet
-    pub service_name: String,
-    /// Request message
-    pub message: Message,
+struct HubContext {
+    pub client_registry: HashMap<String, RpcWriter>,
+    pub pending_connections: HashMap<String, Vec<(String, RpcRequest)>>,
+    pub permissions: Permissions,
 }
 
 pub struct Hub {
-    /// Sender to recieve requests from th eclients
-    client_tx: Sender<ClientRequest>,
-    /// Receiver to recieve requests from th eclients
-    hub_rx: Receiver<ClientRequest>,
-    /// Receiver to listen for shutdown requests
-    shutdown_rx: Receiver<()>,
-    /// A map of anonymous clients. Once a client is registered, it's moved into [Hub::clients]
-    anonymous_clients: HashMap<Uuid, Client>,
-    /// A map of laready registered clients
-    clients: HashMap<String, Client>,
-    /// Permissions handle
-    permissions: Arc<Permissions>,
-    /// If a client uses 'Bus::connect_await' from Krossbar lib, it's waiting for a peer connection in this map
-    pending_connections: HashMap<String, Vec<PendingConnectionRequest>>,
+    tasks: TasksMapType,
+    context: ContextType,
 }
 
 impl Hub {
-    pub fn new(args: Args, shutdown_rx: Receiver<()>) -> Self {
-        let (client_tx, hub_rx) = mpsc::channel::<ClientRequest>(32);
+    pub fn new(args: Args) -> Self {
+        let tasks: TasksMapType = FuturesUnordered::new();
+        tasks.push(Box::pin(pending()));
 
         Self {
-            client_tx,
-            hub_rx,
-            shutdown_rx,
-            anonymous_clients: HashMap::new(),
-            clients: HashMap::new(),
-            permissions: Arc::new(Permissions::new(&args.service_files_dir)),
-            pending_connections: HashMap::new(),
+            tasks,
+            context: Arc::new(Mutex::new(HubContext {
+                client_registry: HashMap::new(),
+                pending_connections: HashMap::new(),
+                permissions: Permissions::new(&args.additional_service_dirs),
+            })),
         }
     }
 
-    /// Start listening for incoming connections
-    pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let socket_path = common::get_hub_socket_path();
+    /// Hub main loop
+    pub async fn run(mut self) {
+        let socket_addr = get_hub_socket_path();
+        info!("Hub socket path: {socket_addr}");
 
-        match UnixListener::bind(socket_path.clone()) {
-            Ok(listener) => {
-                info!(
-                    "Succesfully started listening for incoming connections at: {}",
-                    socket_path
-                );
+        let listener = match UnixListener::bind(&socket_addr) {
+            Ok(listener) => listener,
+            Err(_) => {
+                let _ = std::fs::remove_file(&socket_addr);
+                let result = UnixListener::bind(socket_addr).unwrap();
 
-                // Update permissions to be accessible for th eclient
-                let socket_permissions = fs::Permissions::from_mode(0o666);
-                fs::set_permissions(socket_path.clone(), socket_permissions)?;
+                info!("Hub started listening for new connections");
+                result
+            }
+        };
 
-                loop {
-                    tokio::select! {
-                        Ok((socket, address)) = listener.accept() => {
-                            info!("New connection from a binary {:?}", address.as_pathname());
+        // Update permissions to be accessible for th eclient
+        let socket_permissions = fs::Permissions::from_mode(0o666);
+        fs::set_permissions(get_hub_socket_path(), socket_permissions).unwrap();
 
-                            self.handle_new_client(socket).await
-                        },
-                        Some(client_message) = self.hub_rx.recv() => {
-                            trace!("Incoming client call: {:?}", client_message);
+        async move {
+            loop {
+                select! {
+                    // Accept new connection requests
+                    client = listener.accept().fuse() => {
+                        match client {
+                            Ok((stream, _)) => {
+                                let credentials = stream.peer_cred();
+                                let rpc = Rpc::new(stream);
 
-                            self.handle_client_call(client_message).await
+                                match credentials {
+                                    Ok(credentials) => {
+                                        info!("New connection request: {credentials:?}");
+                                        let connection = Self::make_new_connection(rpc, credentials, self.context.clone());
+
+                                        self.tasks.push(Box::pin(connection))
+                                    },
+                                    Err(e) => {
+                                        warn!("Failed to get client creadentials: {}", e.to_string());
+                                    }
+                                }
+
+                            },
+                            Err(e) => {
+                                warn!("Failed client connection attempt: {}", e.to_string())
+                            }
                         }
-                        _ = self.shutdown_rx.recv() => {
-                            drop(listener);
-                            return Ok(());
+                    },
+                    // Loop clients. Loop return means a client is disconnected
+                    disconnected_service = self.tasks.next() => {
+                        let service_name = disconnected_service.unwrap();
+
+                        match service_name {
+                            Some(service_name) => {
+                                debug!("Client disconnected: {}", service_name);
+                                self.context.lock().await.client_registry.remove(&service_name);
+                            }
+                            _ => {
+                                debug!("Anonymous client disconnected");
+                            }
                         }
+                    },
+                    _ = tokio::signal::ctrl_c().fuse() => return
+                }
+            }
+        }
+        .await;
+    }
+
+    /// Make a connection form a stream
+    async fn make_new_connection(
+        mut rpc: Rpc,
+        credentials: UCred,
+        context: ContextType,
+    ) -> Option<String> {
+        // Authorize the client
+        let service_name = match rpc.poll().await {
+            Some(mut request) => {
+                if request.endpoint() != HUB_REGISTER_METHOD {
+                    request.respond::<()>(Err(Error::ProtocolError)).await;
+                }
+
+                match request.take_body().unwrap() {
+                    // Valid call message
+                    krossbar_common_rpc::request::Body::Call(bson) => {
+                        // Valid Auth message
+                        match bson::from_bson::<HubMessage>(bson) {
+                            Ok(HubMessage::Register { service_name }) => {
+                                // Check permissions
+                                match Self::handle_auth_request(
+                                    &service_name,
+                                    &request,
+                                    credentials,
+                                    &context,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        info!("Succesfully authorized {service_name}");
+                                        request.respond(Ok(())).await;
+
+                                        service_name
+                                    }
+                                    Err(e) => {
+                                        warn!("Service {service_name} is not allowed to register");
+                                        request.respond::<()>(Err(e)).await;
+                                        return None;
+                                    }
+                                }
+                            }
+                            // Connection request instead of an Auth message
+                            Ok(m) => {
+                                warn!("Invalid registration message from a client: {m:?}");
+
+                                request.respond::<()>(Err(Error::ProtocolError)).await;
+                                return None;
+                            }
+                            // Message deserialization error
+                            Err(e) => {
+                                warn!("Invalid Auth message body from a client: {e:?}");
+
+                                request
+                                    .respond::<()>(Err(Error::InternalError(e.to_string())))
+                                    .await;
+                                return None;
+                            }
+                        }
+                    }
+                    // Not a call, but respond, of FD or other irrelevant message
+                    _ => {
+                        warn!("Invalid Auth message from a client (not a call)");
+                        return None;
                     }
                 }
             }
-            Err(err) => {
-                error!(
-                    "Failed to start listening at: {}. Another hub instance is running?",
-                    socket_path
-                );
-                return Err(Box::new(err));
+            // Client disconnected
+            _ => {
+                return None;
             }
-        }
-    }
-
-    /// Handle new connection
-    async fn handle_new_client(&mut self, socket: UnixStream) {
-        // Temporal ID until client sends registration message
-        let uuid = Uuid::new_v4();
-
-        let client = Client::run(
-            uuid.clone(),
-            self.client_tx.clone(),
-            socket,
-            self.permissions.clone(),
-        );
-
-        self.anonymous_clients.insert(uuid.clone(), client);
-    }
-
-    /// Handle a message from a client
-    async fn handle_client_call(&mut self, request: ClientRequest) {
-        match request.message.body() {
-            MessageBody::ServiceMessage(ServiceMessage::Register { .. }) => {
-                self.handle_client_registration(request.uuid, request.message)
-                    .await
-            }
-            MessageBody::ServiceMessage(ServiceMessage::Connect { .. }) => {
-                self.handle_new_connection_request(request.service_name, request.message)
-                    .await
-            }
-            MessageBody::Response(Response::Shutdown(_)) => {
-                self.handle_client_disconnection(&request.uuid, &request.service_name)
-                    .await;
-            }
-            message => {
-                error!(
-                    "Ivalid message from a client `{}`: {:?}",
-                    request.service_name, message
-                );
-            }
-        }
-    }
-
-    /// Hadnle registration message from a client
-    async fn handle_client_registration(&mut self, uuid: Uuid, request: Message) {
-        let (_, service_name) = match request.body() {
-            MessageBody::ServiceMessage(ServiceMessage::Register {
-                protocol_version,
-                service_name,
-            }) => (protocol_version, service_name),
-            _ => panic!("Should never happen"),
         };
 
-        trace!(
-            "Trying to assign service name `{}` to a client with uuid {}",
-            service_name,
-            uuid
-        );
+        // Cient succesfully authorized. Start client loop
+        Some(Self::client_loop(rpc, service_name, context.clone()).await)
+    }
 
-        match self.anonymous_clients.remove(&uuid) {
-            Some(mut client) => {
-                if self.clients.contains_key(service_name) {
-                    error!(
-                        "Failed to register a client with name `{}`. Already exists",
-                        service_name
+    /// Handle client Auth message
+    async fn handle_auth_request(
+        service_name: &str,
+        request: &RpcRequest,
+        credentials: UCred,
+        context: &ContextType,
+    ) -> Result<()> {
+        debug!("Service registration request: {}", service_name);
+
+        let mut context_lock = context.lock().await;
+
+        // Check if we already have a client with the name
+        if context_lock.client_registry.contains_key(service_name) {
+            warn!(
+                "Multiple service registration request from: {}",
+                service_name
+            );
+
+            return Err(Error::AlreadyRegistered);
+        // The only valid Auth request path
+        } else {
+            if !context_lock
+                .permissions
+                .check_service_name_allowed(credentials, service_name)
+            {
+                debug!("Client {service_name} is not allowed to register with a given credentials");
+
+                return Err(Error::NotAllowed);
+            }
+
+            let mut writer = request.writer().clone();
+            Self::resolve_pending_connections(service_name, &mut writer, &mut context_lock).await;
+
+            context_lock
+                .client_registry
+                .insert(service_name.to_owned(), writer);
+
+            info!("Client authorized as: {}", service_name);
+
+            Ok(())
+        }
+    }
+
+    /// Send stream to services, which wait for the connected service
+    async fn resolve_pending_connections(
+        service_name: &str,
+        stream: &mut RpcWriter,
+        context: &mut HubContext,
+    ) {
+        if let Some(waiters) = context.pending_connections.remove(service_name) {
+            for (initiator, request) in waiters.into_iter() {
+                // Let's check if we have alive initiator
+                Self::send_connection_descriptors(&initiator, request, service_name, stream).await
+            }
+        }
+    }
+
+    async fn send_connection_descriptors(
+        initiator: &str,
+        request: RpcRequest,
+        target_service: &str,
+        target_writer: &RpcWriter,
+    ) {
+        match UnixStream::pair() {
+            Ok((socket1, socket2)) => {
+                if let Err(e) = target_writer.connection_request(&initiator, socket1).await {
+                    warn!(
+                        "Failed to send target connection request: {}",
+                        e.to_string()
                     );
 
-                    client
-                        .send_message(
-                            &service_name,
-                            BusError::NameRegistered.into_message(request.seq()),
-                        )
+                    request
+                        .respond::<Result<()>>(Err(Error::PeerDisconnected))
                         .await;
                 } else {
-                    info!("Succesfully registered new client: `{}`", service_name);
-
-                    client
-                        .send_message(&service_name, Response::Ok.into_message(request.seq()))
-                        .await;
-                    self.clients.insert(service_name.clone(), client);
-
-                    // Check if we have pending connections to the client.
-                    // If we do, we resolve all connection request by sending response
-                    if let Some(pending_connection_requests) =
-                        self.pending_connections.remove(service_name)
-                    {
-                        for request in pending_connection_requests {
-                            trace!(
-                                "Resolving connection request to {} from {}",
-                                service_name,
-                                request.requester_service_name
-                            );
-
-                            self.handle_new_connection_request(
-                                request.requester_service_name,
-                                request.request,
-                            )
-                            .await;
-                        }
-                    }
-
-                    trace!("New named clients count: {}", self.clients.len());
-                }
-            }
-            e => {
-                error!(
-                    "Failed to find a client `{}`, which tries to register. This should never happen",
-                    uuid
-                );
-                e.unwrap();
-            }
-        }
-    }
-
-    /// Handle peer connection message from a client
-    async fn handle_new_connection_request(
-        &mut self,
-        requester_service_name: String,
-        request: Message,
-    ) {
-        let (target_service_name, await_connection) = match request.body() {
-            MessageBody::ServiceMessage(ServiceMessage::Connect {
-                peer_service_name,
-                await_connection,
-            }) => (peer_service_name, await_connection),
-            _ => panic!("Should never happen"),
-        };
-
-        trace!(
-            "Trying to connect `{}` to the `{}`",
-            requester_service_name,
-            target_service_name
-        );
-
-        let (left, right) = UnixStream::pair().unwrap();
-
-        {
-            // No service file for the service
-            if !self.permissions.service_file_exists(target_service_name) {
-                warn!(
-                    "`{}` wants to connect to `{}`, which doesn't exist",
-                    requester_service_name, target_service_name
-                );
-
-                match self.clients.get_mut(&requester_service_name) {
-                    Some(client) => {
-                        client
-                            .send_message(
-                                &target_service_name,
-                                BusError::ServiceNotFound.into_message(request.seq()),
-                            )
-                            .await;
-                    }
-                    _ => {
-                        warn!(
-                            "Failed to lookup `{}` service. Asumming disconnected",
-                            requester_service_name
-                        );
-                    }
-                }
-                return;
-            }
-
-            if requester_service_name == *target_service_name {
-                warn!(
-                    "Service `{}` tries to connect to himself",
-                    target_service_name,
-                );
-
-                match self.clients.get_mut(&requester_service_name) {
-                    Some(client) => {
-                        client
-                            .send_message(
-                                &target_service_name,
-                                BusError::NotAllowed.into_message(request.seq()),
-                            )
-                            .await;
-                    }
-                    _ => {
-                        warn!(
-                            "Failed to lookup `{}` service. Asumming disconnected",
-                            requester_service_name
-                        );
-                    }
+                    request.respond_with_fd(Ok(()), socket2).await;
                 }
 
-                return;
+                info!("Succefully sent connection request from {initiator} to {target_service}");
             }
-
-            // Service to which our client wants to connect is not registered
-            if !self.clients.contains_key(target_service_name) {
-                // Peer doesn't want to wait for connection
-                if !await_connection {
-                    warn!(
-                        "Failed to find a service `{}` to connect with `{}`",
-                        target_service_name, requester_service_name
-                    );
-
-                    match self.clients.get_mut(&requester_service_name) {
-                        Some(client) => {
-                            client
-                                .send_message(
-                                    &target_service_name,
-                                    BusError::ServiceNotRegisterd.into_message(request.seq()),
-                                )
-                                .await;
-                        }
-                        _ => {
-                            warn!(
-                                "Failed to lookup `{}` service. Asumming disconnected",
-                                requester_service_name
-                            );
-                        }
-                    }
-
-                    return;
-                }
-
-                // Peer wants to wait for a connection if service still not registered.
-                // Add it to the pending list and return. Now client is sitting and waiting for
-                // the response. See `handle_client_registration` for resolving code
-                info!(
-                    "Adding new pending connection from {} to {}",
-                    requester_service_name, target_service_name
-                );
-
-                self.pending_connections
-                    .entry(target_service_name.clone())
-                    .or_insert(vec![])
-                    .push(PendingConnectionRequest {
-                        requester_service_name,
-                        request,
-                    });
-                return;
-            }
-
-            // Send descriptor to the requester
-            let message = ServiceMessage::IncomingPeerFd {
-                peer_service_name: target_service_name.clone(),
-            }
-            .into_message(request.seq());
-
-            match self.clients.get_mut(&requester_service_name) {
-                Some(client) => {
-                    client
-                        .send_connection_fd(message, &target_service_name, left)
-                        .await;
-                }
-                _ => {
-                    warn!(
-                        "Failed to lookup `{}` service. Asumming disconnected",
-                        requester_service_name
-                    );
-                    return;
-                }
-            }
-        }
-
-        // Send descriptor to the target service
-        // NOTE: It's duplicates, but it's possible that hub will send different message
-        let message = ServiceMessage::IncomingPeerFd {
-            peer_service_name: requester_service_name.clone(),
-        }
-        .into_message(request.seq());
-
-        match self.clients.get_mut(target_service_name) {
-            Some(client) => {
-                client
-                    .send_connection_fd(message, &requester_service_name, right)
+            Err(e) => {
+                request
+                    .respond::<()>(Err(Error::InternalError(e.to_string())))
                     .await;
             }
-            _ => {
-                warn!(
-                    "Failed to lookup `{}` service. Asumming disconnected",
-                    requester_service_name
-                );
+        }
+    }
 
-                return;
+    async fn client_loop(mut rpc: Rpc, service_name: String, context: ContextType) -> String {
+        loop {
+            match rpc.poll().await {
+                Some(mut request) => {
+                    if request.endpoint() != HUB_CONNECT_METHOD {
+                        request.respond::<()>(Err(Error::ProtocolError)).await;
+                    }
+
+                    match request.take_body().unwrap() {
+                        // Valid call message
+                        krossbar_common_rpc::request::Body::Call(bson) => {
+                            // Valid Auth message
+                            match bson::from_bson::<HubMessage>(bson) {
+                                Ok(HubMessage::Connect {
+                                    service_name: peer_service_name,
+                                    wait,
+                                }) => {
+                                    Self::handle_connection_request(
+                                        &service_name,
+                                        &peer_service_name,
+                                        request,
+                                        wait,
+                                        &context,
+                                    )
+                                    .await;
+                                }
+                                // Connection request instead of an Auth message
+                                Ok(m) => {
+                                    warn!("Invalid connection message from a client: {m:?}");
+
+                                    request.respond::<()>(Err(Error::ProtocolError)).await;
+                                    return service_name;
+                                }
+                                // Message deserialization error
+                                Err(e) => {
+                                    warn!("Invalid connection message body from a client: {e:?}");
+
+                                    request
+                                        .respond::<()>(Err(Error::InternalError(e.to_string())))
+                                        .await;
+                                    return service_name;
+                                }
+                            }
+                        }
+                        // Not a call, but respond, of FD or other irrelevant message
+                        _ => {
+                            warn!("Invalid connection message from a client (not a call)");
+                            return service_name;
+                        }
+                    }
+                }
+                _ => return service_name,
             }
         }
+    }
 
+    async fn handle_connection_request(
+        service_name: &str,
+        target_service: &str,
+        request: RpcRequest,
+        add_pending: bool,
+        context: &ContextType,
+    ) {
         info!(
-            "Succesfully connected `{}` to `{}`",
-            requester_service_name, target_service_name
-        )
-    }
+            "Incoming connection request from {} to {}",
+            service_name, service_name
+        );
 
-    /// Handle client disconnections
-    async fn handle_client_disconnection(&mut self, uuid: &Uuid, service_name: &String) {
-        self.anonymous_clients.remove(uuid);
-        self.clients.remove(service_name);
+        let mut context_lock = context.lock().await;
 
-        trace!("New named clients count: {}", self.clients.len());
-    }
-}
+        // Check if service allowed to connect
+        if !context_lock
+            .permissions
+            .check_connection_allowed(service_name, target_service)
+        {
+            request.respond::<()>(Err(Error::NotAllowed)).await;
+            return;
+        }
 
-impl Drop for Hub {
-    fn drop(&mut self) {
-        info!("Shutting down Krossbar hub");
-
-        if let Err(err) = fs::remove_file(common::get_hub_socket_path()) {
-            error!("Failed to remove hub socket file: {}", err);
+        match context_lock.client_registry.get(target_service) {
+            Some(target_writer) => {
+                Self::send_connection_descriptors(
+                    service_name,
+                    request,
+                    target_service,
+                    target_writer,
+                )
+                .await
+            }
+            _ => {
+                if !add_pending {
+                    request.respond::<()>(Err(Error::ServiceNotFound)).await;
+                } else {
+                    context_lock
+                        .pending_connections
+                        .entry(target_service.to_owned())
+                        .or_default()
+                        .push((service_name.to_owned(), request));
+                }
+            }
         }
     }
 }

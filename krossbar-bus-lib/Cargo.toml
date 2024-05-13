@@ -1,29 +1,42 @@
 [package]
 name = "krossbar-bus-lib"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
+rust-version = "1.75"
+authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/krossbar-platform/krossbar-bus"
+homepage = "https://krossbar.rs"
+description = """
+Krossbar bus library
+"""
+categories = ["network-programming"]
+keywords = ["rpc"]
+
+[features]
+default = ["inspection", "monitor"]
+monitor = ["krossbar-common-rpc/monitor"]
+inspection = []
 
 [dependencies]
-anyhow = "1"
-async-trait = "0.1"
-async-recursion = "1.0"
-bson = "2.3"
-bytes = "1.1"
+async-channel = "2.2"
+bson = "2.10"
+colored = "2.1"
+futures = "0.3"
 log = "0.4"
-tokio = { version = "1.19", features = ["sync", "io-util", "net", "time"] }
-tokio-send-fd = "0.9"
-tokio-stream = "0.1"
 serde = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.37", features = ["net", "time", "signal"] }
 
 krossbar-bus-common = { path = "../krossbar-bus-common" }
-krossbar-common-rpc = { git = "https://github.com/krossbar-platform/krossbar-common.git" }
-krossbar-common-messages = { git = "https://github.com/krossbar-platform/krossbar-common.git" }
-krossbar-common-connection = { git = "https://github.com/krossbar-platform/krossbar-common.git" }
+krossbar-common-rpc = "0.3.2"
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
 json = "0.12.4"
 tempdir = "0.3.7"
+tokio = { version = "1.37", features = ["full"] }
+tokio-util = "0.7"
 
 krossbar-bus-hub = { path = "../krossbar-bus-hub" }
-tokio = { version = "1.19", features = ["rt-multi-thread", "signal", "fs"] }

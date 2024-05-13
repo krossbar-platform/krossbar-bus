@@ -1,66 +1,109 @@
+use std::{ops::Deref, sync::Arc};
+
 use bson::Bson;
-use log::{error, warn};
+use futures::{lock::Mutex, stream, StreamExt};
+use log::debug;
 use serde::Serialize;
-use tokio::sync::{broadcast::Sender as BroadcastSender, watch::Sender as WatchSender};
 
-use krossbar_bus_common::messages::{IntoMessage, Message, Response};
+use krossbar_common_rpc::writer::RpcWriter;
 
-pub type ExternalStateGetter = Box<dyn Fn() -> Bson + Send + Sync>;
+type SubVectorType = Arc<Mutex<Vec<(i64, RpcWriter)>>>;
+type CurrentValueBson = Arc<Mutex<Bson>>;
 
-/// State handle, which can be used for state changes notifications.
-/// Locally can be managed using [State::set] and [State::get] methods
+pub(crate) struct Handle {
+    clients: SubVectorType,
+    current_value: CurrentValueBson,
+}
+
+impl Handle {
+    fn new(clients: SubVectorType, current_value: CurrentValueBson) -> Self {
+        Self {
+            clients,
+            current_value,
+        }
+    }
+
+    pub(crate) async fn add_client(&self, sub_id: i64, writer: RpcWriter) {
+        let response = Ok(self.current_value.lock().await.clone());
+
+        if writer.respond(sub_id, response).await {
+            self.clients.lock().await.push((sub_id, writer))
+        }
+    }
+
+    pub(crate) async fn value(&self) -> Bson {
+        self.current_value.lock().await.clone()
+    }
+}
+
 pub struct State<T: Serialize> {
-    /// Sender used by subscribers to receive state changes
-    tx: BroadcastSender<Message>,
-    /// Watch to notify service about current state value change
-    watch_tx: WatchSender<Bson>,
-    /// Registered state name
-    name: String,
-    /// Current value
+    clients: Arc<Mutex<Vec<(i64, RpcWriter)>>>,
     value: T,
+    current_value: CurrentValueBson,
 }
 
 impl<T: Serialize> State<T> {
-    pub(crate) fn new(
-        name: String,
-        value: T,
-        tx: BroadcastSender<Message>,
-        watch_tx: WatchSender<Bson>,
-    ) -> Self {
-        Self {
-            tx,
-            watch_tx,
-            name,
+    pub(crate) fn new(value: T) -> crate::Result<Self> {
+        let bson = match bson::to_bson(&value) {
+            Ok(bson) => bson,
+            Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
+        };
+
+        let current_value = Arc::new(Mutex::new(bson));
+
+        Ok(Self {
+            clients: Arc::new(Mutex::new(Vec::new())),
             value,
-        }
+            current_value,
+        })
     }
 
-    /// Set new state value. Will notify subscribers about the ctate change
-    pub fn set(&mut self, value: T) {
-        if self.tx.receiver_count() == 0 {
-            return;
-        }
+    pub async fn set(&mut self, data: T) -> crate::Result<()> {
+        debug!("Set a state");
 
-        let bson = bson::to_bson(&value).unwrap();
-        self.value = value;
+        let bson = match bson::to_bson(&data) {
+            Ok(bson) => bson,
+            Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
+        };
 
-        // First notify watch so new clients could get current value
-        if let Err(err) = self.watch_tx.send(bson.clone()) {
-            warn!(
-                "Failed to set watch value for a state `{}`: {:?}",
-                self.name, err
-            );
-        }
+        self.value = data;
 
-        let message = Response::StateChanged(bson).into_message(0xFEEDC0DE);
+        let mut bson_lock = self.current_value.lock().await;
+        *bson_lock = bson;
 
-        if let Err(err) = self.tx.send(message) {
-            error!("Failed to send state schange `{}`: {:?}", self.name, err);
-        }
+        let mut client_lock = self.clients.lock().await;
+
+        // Send data and remove clients, who don't want it anymore
+        *client_lock = stream::iter(client_lock.drain(..))
+            .filter_map(|(sub_id, client)| {
+                let data_copy = bson_lock.clone();
+                async move {
+                    if client.respond(sub_id, Ok(data_copy)).await {
+                        Some((sub_id, client))
+                    } else {
+                        None
+                    }
+                }
+            })
+            .collect()
+            .await;
+
+        Ok(())
     }
 
-    /// Get current state value
     pub fn get(&self) -> &T {
         &self.value
+    }
+
+    pub(crate) fn handle(&self) -> Handle {
+        Handle::new(self.clients.clone(), self.current_value.clone())
+    }
+}
+
+impl<T: Serialize> Deref for State<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.get()
     }
 }

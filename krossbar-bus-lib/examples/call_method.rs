@@ -1,7 +1,6 @@
+use krossbar_bus_lib::client::Service;
 use log::{LevelFilter, *};
 use tokio;
-
-use krossbar_bus_lib::Bus;
 
 #[tokio::main]
 async fn main() {
@@ -9,7 +8,7 @@ async fn main() {
         .filter_level(LevelFilter::Debug)
         .init();
 
-    let mut bus = Bus::register("com.examples.call_method").await.unwrap();
+    let mut bus = Service::new("com.examples.call_method").await.unwrap();
 
     let peer_connection = bus
         .connect("com.examples.register_method".into())

@@ -2,8 +2,8 @@
 
 members = [
     "krossbar-bus-common",
-    "krossbar-bus-connect",
-    "krossbar-bus-hub",
-    "krossbar-bus-monitor",
+    # "krossbar-bus-connect",
+    # "krossbar-bus-hub",
+    # "krossbar-bus-monitor",
     "krossbar-bus-lib",
 ]

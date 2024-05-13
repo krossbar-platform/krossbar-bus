@@ -1,47 +1,41 @@
-use std::{
-    env,
-    path::Path,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{env, path::Path, time::Duration};
 
+use futures::StreamExt;
 use json::JsonValue;
+use krossbar_bus_lib::client::Service;
+use krossbar_hub_lib::{args::Args, hub::Hub};
 use log::LevelFilter;
 use tempdir::TempDir;
-use tokio::{
-    fs::OpenOptions,
-    io::AsyncWriteExt,
-    sync::mpsc::{self, Sender},
-    time,
-};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, time};
 
 use krossbar_bus_common::HUB_SOCKET_PATH_ENV;
-use krossbar_bus_hub::{args::Args, hub::Hub};
-use krossbar_bus_lib::Bus;
+use tokio_util::sync::CancellationToken;
 
-async fn start_hub(socket_path: &str, service_files_dir: &str) -> Sender<()> {
+async fn start_hub(socket_path: &str, service_files_dir: &str) -> CancellationToken {
     env::set_var(HUB_SOCKET_PATH_ENV, socket_path);
 
     let args = Args {
         log_level: LevelFilter::Debug,
-        service_files_dir: service_files_dir.into(),
+        additional_service_dirs: vec![service_files_dir.to_owned()],
     };
 
-    // let _ = pretty_env_logger::formatted_builder()
-    //     .filter_level(args.log_level)
-    //     .try_init();
+    let _ = pretty_env_logger::formatted_builder()
+        .filter_level(args.log_level)
+        .try_init();
 
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-
+    let cancel_token = CancellationToken::new();
+    let token = cancel_token.clone();
     tokio::spawn(async move {
-        let mut hub = Hub::new(args, shutdown_rx);
-        hub.run().await.expect("Failed to run hub");
+        tokio::select! {
+            _ = Hub::new(args).run() => {}
+            _ = cancel_token.cancelled() => {}
+        }
 
         println!("Shutting hub down");
     });
 
     println!("Succesfully started hub socket");
-    shutdown_tx
+    token
 }
 
 async fn write_service_file(service_dir: &Path, service_name: &str, content: JsonValue) {
@@ -62,7 +56,8 @@ async fn write_service_file(service_dir: &Path, service_name: &str, content: Jso
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_signals() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -73,7 +68,7 @@ async fn test_signals() {
 
     let service_dir = TempDir::new("test_signals").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(
+    let cancel_token = start_hub(
         &socket_path,
         service_dir.path().as_os_str().to_str().unwrap(),
     )
@@ -95,13 +90,15 @@ async fn test_signals() {
     let register_service_name = "com.register_signal";
     write_service_file(service_dir.path(), register_service_name, service_file_json).await;
 
-    let mut bus1 = Bus::register(register_service_name)
+    let mut service1 = Service::new(register_service_name)
         .await
         .expect("Failed to register service");
 
-    let signal = bus1
+    let signal = service1
         .register_signal::<i32>("signal")
         .expect("Failed to register signal");
+
+    tokio::spawn(service1.run());
 
     // Create service file first
     let service_file_json = json::parse(
@@ -117,53 +114,59 @@ async fn test_signals() {
     let service_name = "com.subscribe_on_signal";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let mut bus2 = Bus::register(service_name)
+    let mut service2 = Service::new(service_name)
         .await
         .expect("Failed to register service");
 
-    let peer = bus2
+    let peer = service2
         .connect(register_service_name)
         .await
         .expect("Failed to connect to the target service");
 
-    // Value to be set on call back
-    let signal_value = Arc::new(Mutex::new(0));
-    let signal_value_clone = signal_value.clone();
+    tokio::spawn(service2.run());
 
     // Invalid signal
-    peer.subscribe("non_existing_signal", |_: i32| async move {
-        panic!("This should never happen");
-    })
-    .await
-    .expect_err("Invalid signal subscription succeeded");
+    let mut non_existing_signal = peer
+        .subscribe::<u32>("non_existing_signal")
+        .await
+        .expect("Failed to send signal subscription");
+    non_existing_signal
+        .next()
+        .await
+        .unwrap()
+        .expect_err("Subscribed to a non-existing signal");
 
     // Invalid param
-    peer.subscribe("signal", |_: String| async move {
-        panic!("This should never happen");
-    })
-    .await
-    .expect("Failed to subscribe to the signal");
+    let mut bad_types_signal = peer
+        .subscribe::<String>("signal")
+        .await
+        .expect("Failed to subscribe to the signal");
 
-    signal.emit(42);
     time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(*signal_value.lock().unwrap(), 0);
+    signal.emit(&42).await.unwrap();
+    bad_types_signal
+        .next()
+        .await
+        .unwrap()
+        .expect_err("Valid signal from int to String");
 
     // Valid subscriptions
-    peer.subscribe("signal", move |value: i32| {
-        let signal_value = signal_value_clone.clone();
-        async move {
-            *signal_value.lock().unwrap() = value;
-        }
-    })
-    .await
-    .expect("Failed to subscribe to the signal");
-
-    signal.emit(42);
-    time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(*signal_value.lock().unwrap(), 42);
-
-    shutdown_tx
-        .send(())
+    let mut good_signal = peer
+        .subscribe::<u32>("signal")
         .await
-        .expect("Failed to send shutdown request to the hub");
+        .expect("Failed to subscribe to the signal");
+
+    time::sleep(Duration::from_millis(10)).await;
+    signal.emit(&42).await.unwrap();
+
+    assert_eq!(
+        good_signal
+            .next()
+            .await
+            .unwrap()
+            .expect("Good signal never arrived"),
+        42,
+    );
+
+    cancel_token.cancel()
 }

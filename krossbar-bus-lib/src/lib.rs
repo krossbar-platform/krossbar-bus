@@ -1,7 +1,5 @@
-pub mod bus;
-mod connections;
-mod endpoints;
-mod monitor;
-mod utils;
+pub mod client;
+pub mod endpoints;
+mod signal;
 
-pub use bus::Bus;
+pub use krossbar_common_rpc::{Error, Result};

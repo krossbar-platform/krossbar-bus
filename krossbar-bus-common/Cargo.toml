@@ -1,15 +1,27 @@
 [package]
 name = "krossbar-bus-common"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
+rust-version = "1.75"
+authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/krossbar-platform/krossbar-bus"
+homepage = "https://krossbar.rs"
+description = """
+Krossbar bus common library
+"""
+categories = ["network-programming"]
+keywords = ["rpc"]
+
+[features]
+default = ["inspection", "monitor"]
+monitor = ["krossbar-common-rpc/monitor"]
+inspection = []
 
 [dependencies]
-colored = "2"
-bytes = "1.1"
-bson = "2.3"
-log = "0.4"
+colored = "2.1"
 serde = "1.0"
 thiserror = "1.0"
-tokio = { version = "1.19", features = ["io-util", "net", "sync"] }
 
-karo-common-messages = { git = "https://github.com/krossbar-platform/krossbar-common.git" }
+krossbar-common-rpc = "0.3"

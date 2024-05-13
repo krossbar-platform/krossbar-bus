@@ -1,43 +1,39 @@
 use std::{env, path::Path, time::Duration};
 
 use json::JsonValue;
+use krossbar_bus_common::{get_service_files_dir, HUB_SOCKET_PATH_ENV};
+use krossbar_bus_lib::client::Service;
+use krossbar_hub_lib::{args::Args, hub::Hub};
 use log::LevelFilter;
 use tempdir::TempDir;
-use tokio::{
-    fs::OpenOptions,
-    io::AsyncWriteExt,
-    net::UnixStream,
-    sync::mpsc::{self, Sender},
-    time,
-};
+use tokio::{fs::OpenOptions, io::AsyncWriteExt, net::UnixStream, time};
+use tokio_util::sync::CancellationToken;
 
-use krossbar_bus_common::{HUB_SOCKET_PATH_ENV, SERVICE_FILES_DIR};
-use krossbar_bus_hub::{args::Args, hub::Hub};
-use krossbar_bus_lib::Bus;
-
-async fn start_hub(socket_path: &str, service_files_dir: &str) -> Sender<()> {
+fn start_hub(socket_path: &str, service_files_dir: &str) -> CancellationToken {
     env::set_var(HUB_SOCKET_PATH_ENV, socket_path);
 
     let args = Args {
         log_level: LevelFilter::Debug,
-        service_files_dir: service_files_dir.into(),
+        additional_service_dirs: vec![service_files_dir.to_owned()],
     };
 
-    // let _ = pretty_env_logger::formatted_builder()
-    //     .filter_level(args.log_level)
-    //     .try_init();
+    let _ = pretty_env_logger::formatted_builder()
+        .filter_level(args.log_level)
+        .try_init();
 
-    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
-
+    let cancel_token = CancellationToken::new();
+    let token = cancel_token.clone();
     tokio::spawn(async move {
-        let mut hub = Hub::new(args, shutdown_rx);
-        hub.run().await.expect("Failed to run hub");
+        tokio::select! {
+            _ = Hub::new(args).run() => {}
+            _ = cancel_token.cancelled() => {}
+        }
 
         println!("Shutting hub down");
     });
 
     println!("Succesfully started hub socket");
-    shutdown_tx
+    token
 }
 
 async fn write_service_file(service_dir: &Path, service_name: &str, content: JsonValue) {
@@ -58,7 +54,8 @@ async fn write_service_file(service_dir: &Path, service_name: &str, content: Jso
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_dropped_connection() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -67,14 +64,14 @@ async fn test_dropped_connection() {
         .unwrap()
         .into();
 
-    let shutdown_tx = start_hub(&socket_path, SERVICE_FILES_DIR).await;
+    let cancel_token = start_hub(&socket_path, &get_service_files_dir());
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
     let mut connection = UnixStream::connect(&socket_path)
         .await
         .expect("Failed to connect to the hub");
-    println!("Succesfulyy connected to the hub");
+    println!("Succesfully connected to the hub");
 
     // Force drop connection
     drop(connection);
@@ -83,18 +80,16 @@ async fn test_dropped_connection() {
     connection = UnixStream::connect(&socket_path)
         .await
         .expect("Failed to connect to the hub");
-    println!("Succesfulyy connected to the hub second time");
+    println!("Succesfully connected to the hub second time");
     drop(connection);
 
-    shutdown_tx
-        .send(())
-        .await
-        .expect("Failed to send shutdown request to the hub");
+    cancel_token.cancel()
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_non_existing_service_name() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -106,30 +101,27 @@ async fn test_non_existing_service_name() {
     let service_dir =
         TempDir::new("krossbar_test_non_existing_service_name").expect("Failed to create tempdir");
 
-    let shutdown_tx = start_hub(
+    let cancel_token = start_hub(
         &socket_path,
         service_dir.path().as_os_str().to_str().unwrap(),
-    )
-    .await;
+    );
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
-    match Bus::register("non.existing.name").await {
+    match Service::new("non.existing.name").await {
         Ok(_) => panic!("Shouldn't be allowed"),
         Err(err) => {
-            println!("Valid connection error: {}", err.to_string())
+            println!("Valid connection error: {err:?}")
         }
     }
 
-    shutdown_tx
-        .send(())
-        .await
-        .expect("Failed to send shutdown request to the hub");
+    cancel_token.cancel()
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_non_allowed_service_name() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -155,30 +147,27 @@ async fn test_non_allowed_service_name() {
     let service_name = "not.allowed.name";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let shutdown_tx = start_hub(
+    let cancel_token = start_hub(
         &socket_path,
         service_dir.path().as_os_str().to_str().unwrap(),
-    )
-    .await;
+    );
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
-    match Bus::register(service_name).await {
+    match Service::new(service_name).await {
         Ok(_) => panic!("Shouldn't be allowed"),
         Err(err) => {
-            println!("Valid connection error: {}", err.to_string())
+            println!("Valid connection error: {err:?}")
         }
     }
 
-    shutdown_tx
-        .send(())
-        .await
-        .expect("Failed to send shutdown request to the hub");
+    cancel_token.cancel()
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_valid_registration() {
-    let socket_dir = TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
+    let socket_dir =
+        TempDir::new("krossbar_hub_socket_dir").expect("Failed to create socket tempdir");
     let socket_path: String = socket_dir
         .path()
         .join("krossbar_hub.socket")
@@ -203,20 +192,16 @@ async fn test_valid_registration() {
     let service_name = "com.krossbar.service.name";
     write_service_file(service_dir.path(), service_name, service_file_json).await;
 
-    let shutdown_tx = start_hub(
+    let cancel_token = start_hub(
         &socket_path,
         service_dir.path().as_os_str().to_str().unwrap(),
-    )
-    .await;
+    );
     // Lets wait until hub starts
     time::sleep(Duration::from_millis(10)).await;
 
-    Bus::register(service_name)
+    Service::new(service_name)
         .await
         .expect("Failed to register valid service");
 
-    shutdown_tx
-        .send(())
-        .await
-        .expect("Failed to send shutdown request to the hub");
+    cancel_token.cancel()
 }
