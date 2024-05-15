@@ -8,7 +8,7 @@ use std::path::Path;
 use clap::Parser;
 use log::*;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     debug!("Starting Krossbar hub");
 

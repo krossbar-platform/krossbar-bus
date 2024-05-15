@@ -28,7 +28,7 @@ json = "0.12"
 log = "0.4"
 pretty_env_logger = "0.4"
 serde = "1.0"
-tokio = { version = "1.37", features = ["net"] }
+tokio = { version = "1.37", features = ["net", "signal", "rt", "macros"] }
 thiserror = "1.0"
 
 krossbar-bus-common = "0.3.4"
