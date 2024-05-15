@@ -110,7 +110,7 @@ impl Service {
         P: DeserializeOwned + 'static + Send,
         R: Serialize,
         Fr: Future<Output = R> + Send,
-        F: FnMut(P) -> Fr + 'static + Send,
+        F: FnMut(String, P) -> Fr + 'static + Send,
     {
         self.endpoints.register_method(name, func)
     }
@@ -220,8 +220,8 @@ impl Service {
         }
     }
 
-    async fn handle_incoming_call(&mut self, _service_name: &String, request: RpcRequest) {
-        self.endpoints.handle_call(request).await
+    async fn handle_incoming_call(&mut self, service_name: &str, request: RpcRequest) {
+        self.endpoints.handle_call(service_name, request).await
     }
 
     async fn hub_connect(service_name: &str, hub_socket_path: &Path) -> crate::Result<Rpc> {

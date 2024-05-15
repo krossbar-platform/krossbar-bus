@@ -12,8 +12,9 @@ use self::{signal::Signal, state::State};
 pub mod signal;
 pub mod state;
 
-type MethodFunctionType =
-    Box<dyn FnMut(Bson) -> Pin<Box<dyn Future<Output = crate::Result<Bson>> + Send>> + Send>;
+type MethodFunctionType = Box<
+    dyn FnMut(String, Bson) -> Pin<Box<dyn Future<Output = crate::Result<Bson>> + Send>> + Send,
+>;
 
 pub struct Endpoints {
     methods: HashMap<String, MethodFunctionType>,
@@ -30,7 +31,7 @@ impl Endpoints {
         }
     }
 
-    pub async fn handle_call(&mut self, mut request: RpcRequest) {
+    pub async fn handle_call(&mut self, client_name: &str, mut request: RpcRequest) {
         match request.take_body().unwrap() {
             Body::Call(params) => {
                 if let Some(method) = self.methods.get_mut(request.endpoint()) {
@@ -39,7 +40,7 @@ impl Endpoints {
                         request.endpoint()
                     );
 
-                    let result = method(params).await;
+                    let result = method(client_name.to_owned(), params).await;
                     request.respond(result).await;
                 } else if let Some(state) = self.states.get_mut(request.endpoint()) {
                     debug!("State subscription. Name: {}", request.endpoint());
@@ -80,31 +81,32 @@ impl Endpoints {
         P: DeserializeOwned + 'static + Send,
         R: Serialize,
         Fr: Future<Output = R> + Send,
-        F: FnMut(P) -> Fr + 'static + Send,
+        F: FnMut(String, P) -> Fr + 'static + Send,
     {
         if self.methods.contains_key(name) {
             return Err(crate::Error::AlreadyRegistered);
         }
 
         let function_mutex = Arc::new(Mutex::new(func));
-        let internal_method: MethodFunctionType = Box::new(move |param: Bson| {
-            let param = match bson::from_bson::<P>(param) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Box::pin(future::err(crate::Error::ParamsTypeError(e.to_string())))
-                }
-            };
+        let internal_method: MethodFunctionType =
+            Box::new(move |client_name: String, param: Bson| {
+                let param = match bson::from_bson::<P>(param) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Box::pin(future::err(crate::Error::ParamsTypeError(e.to_string())))
+                    }
+                };
 
-            let fn_clone = function_mutex.clone();
-            Box::pin(async move {
-                let result = fn_clone.lock().await(param).await;
+                let fn_clone = function_mutex.clone();
+                Box::pin(async move {
+                    let result = fn_clone.lock().await(client_name, param).await;
 
-                match bson::to_bson(&result) {
-                    Ok(bson) => Ok(bson),
-                    Err(e) => Err(crate::Error::ResultTypeError(e.to_string())),
-                }
-            })
-        });
+                    match bson::to_bson(&result) {
+                        Ok(bson) => Ok(bson),
+                        Err(e) => Err(crate::Error::ResultTypeError(e.to_string())),
+                    }
+                })
+            });
 
         self.methods
             .insert(name.to_owned(), Box::new(internal_method));

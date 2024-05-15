@@ -37,10 +37,14 @@ async fn test_methods(
         .expect("Failed to register service");
 
     service1
-        .register_method("method", |value: i32| async move {
+        .register_method("method", |client_name, value: i32| async move {
+            println!("Client name: {client_name}");
+
             return format!("Hello, {}", value);
         })
         .expect("Failed to register method");
+
+    tokio::spawn(service1.run());
 
     // Create service file first
     let service_file_json = json::parse(
@@ -64,6 +68,8 @@ async fn test_methods(
         .connect(register_service_name)
         .await
         .expect("Failed to connect to the target service");
+
+    tokio::spawn(service2.run());
 
     // Invalid method
     peer.call::<String, String>("non_existing_method", &"invalid_string".into())
