@@ -1,7 +1,18 @@
 [package]
 name = "krossbar-bus-hub"
-version = "0.1.0"
+version = "0.3.4"
 edition = "2021"
+rust-version = "1.75"
+authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/krossbar-platform/krossbar-bus"
+homepage = "https://krossbar.rs"
+description = """
+Krossbar bus hub
+"""
+categories = ["network-programming"]
+keywords = ["rpc", "messaging"]
 
 [lib]
 name = "krossbar_hub_lib"
