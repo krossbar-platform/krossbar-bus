@@ -1,6 +1,6 @@
-# Krossbar bus common data
+# Krossbar bus hub
 
-Krossbar bus common data
+Krossbar bus hub
 
 [![MIT licensed][mit-badge]][mit-url]
 [![Build Status][actions-badge]][actions-url]
