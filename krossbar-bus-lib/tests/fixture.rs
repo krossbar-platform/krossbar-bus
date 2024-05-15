@@ -16,9 +16,9 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    pub async fn new() -> Self {
+    pub async fn new(log_level: LevelFilter) -> Self {
         let _ = pretty_env_logger::formatted_builder()
-            .filter_level(LevelFilter::Debug)
+            .filter_level(log_level)
             .try_init();
 
         let socket_dir =
@@ -36,30 +36,24 @@ impl Fixture {
             cancel_token: CancellationToken::new(),
         };
 
-        this.start_hub().await;
+        this.start_hub(log_level).await;
         this
     }
 
-    async fn start_hub(&self) {
+    async fn start_hub(&self, log_level: LevelFilter) {
         let args = Args {
-            log_level: LevelFilter::Debug,
+            log_level,
             additional_service_dirs: vec![self.service_files_dir.path().into()],
             socket_path: self.socket_path.clone(),
         };
 
         let token = self.cancel_token.clone();
         tokio::spawn(async move {
-            println!("Starting hub up");
-
             tokio::select! {
                 _ = Hub::new(args).run() => {}
                 _ = token.cancelled() => {}
             }
-
-            println!("Shutting hub down");
         });
-
-        println!("Succesfully started hub socket");
     }
 
     pub fn write_service_file(&self, service_name: &str, content: JsonValue) {
@@ -90,5 +84,10 @@ impl Fixture {
 
 #[fixture]
 pub async fn make_fixture() -> Fixture {
-    Fixture::new().await
+    Fixture::new(LevelFilter::Debug).await
+}
+
+#[fixture]
+pub async fn make_warn_fixture() -> Fixture {
+    Fixture::new(LevelFilter::Warn).await
 }

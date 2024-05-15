@@ -49,17 +49,11 @@ impl Fixture {
 
         let token = self.cancel_token.clone();
         tokio::spawn(async move {
-            println!("Starting hub up");
-
             tokio::select! {
                 _ = Hub::new(args).run() => {}
                 _ = token.cancelled() => {}
             }
-
-            println!("Shutting hub down");
         });
-
-        println!("Succesfully started hub socket");
     }
 
     pub fn write_service_file(&self, service_name: &str, content: JsonValue) {
