@@ -86,7 +86,7 @@ async fn test_signals(
         .expect("Failed to subscribe to the signal");
 
     time::sleep(Duration::from_millis(10)).await;
-    signal.emit(&42).await.unwrap();
+    signal.emit(42).await.unwrap();
     bad_types_signal
         .next()
         .await
@@ -100,7 +100,7 @@ async fn test_signals(
         .expect("Failed to subscribe to the signal");
 
     time::sleep(Duration::from_millis(10)).await;
-    signal.emit(&42).await.unwrap();
+    signal.emit(42).await.unwrap();
 
     assert_eq!(
         good_signal

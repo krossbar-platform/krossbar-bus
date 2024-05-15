@@ -35,10 +35,10 @@ impl<T: Serialize> Signal<T> {
         }
     }
 
-    pub async fn emit(&self, data: &T) -> crate::Result<()> {
+    pub async fn emit(&self, data: T) -> crate::Result<()> {
         debug!("Emitting a signal");
 
-        let bson = match bson::to_bson(data) {
+        let bson = match bson::to_bson(&data) {
             Ok(bson) => bson,
             Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
         };

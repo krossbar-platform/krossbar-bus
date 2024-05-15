@@ -1,7 +1,11 @@
-use log::{LevelFilter, *};
-use tokio;
+use std::path::PathBuf;
 
-use krossbar_bus_lib::Bus;
+use futures::StreamExt;
+use log::{LevelFilter, *};
+use tokio::{self, select};
+
+use krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH;
+use krossbar_bus_lib::service::Service;
 
 #[tokio::main]
 async fn main() {
@@ -9,21 +13,28 @@ async fn main() {
         .filter_level(LevelFilter::Debug)
         .init();
 
-    let mut bus = Bus::register("com.examples.subscribe_on_signal")
-        .await
-        .unwrap();
+    let mut service = Service::new(
+        "com.examples.subscribe_on_signal",
+        &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
+    )
+    .await
+    .unwrap();
 
-    let peer_connection = bus
+    let peer_connection = service
         .connect_await("com.examples.register_signal")
         .await
         .unwrap();
 
-    peer_connection
-        .subscribe("signal", |value: i64| async move {
-            debug!("Signal value: {}", value);
-        })
-        .await
-        .unwrap();
+    let mut subscription = peer_connection.subscribe::<i64>("signal").await.unwrap();
 
-    let _ = tokio::signal::ctrl_c().await;
+    loop {
+        select! {
+            value = subscription.next() => {
+                debug!("Signal value: {value:?}");
+            }
+            _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+        }
+    }
 }

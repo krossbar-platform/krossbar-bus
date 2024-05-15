@@ -1,9 +1,10 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use log::LevelFilter;
 use tokio;
 
-use krossbar_bus_lib::Bus;
+use krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH;
+use krossbar_bus_lib::service::Service;
 
 #[tokio::main]
 async fn main() {
@@ -11,18 +12,23 @@ async fn main() {
         .filter_level(LevelFilter::Trace)
         .init();
 
-    let mut bus = Bus::register("com.examples.register_signal").await.unwrap();
+    let mut service = Service::new(
+        "com.examples.register_signal",
+        &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
+    )
+    .await
+    .unwrap();
 
-    let signal = bus.register_signal::<i64>("signal").unwrap();
+    let signal = service.register_signal::<i64>("signal").unwrap();
 
     let mut increment = 0;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { return },
             _ = tokio::time::sleep(Duration::from_secs(3)) => {
-                signal.emit(42 + increment);
-                signal.emit(11 + increment);
-                signal.emit(64 + increment);
+                signal.emit(42 + increment).await.unwrap();
+                signal.emit(11 + increment).await.unwrap();
+                signal.emit(64 + increment).await.unwrap();
                 increment += 1
             }
         }

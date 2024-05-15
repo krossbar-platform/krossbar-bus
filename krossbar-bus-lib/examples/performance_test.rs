@@ -1,7 +1,10 @@
+use std::path::PathBuf;
+
 use log::LevelFilter;
 use tokio;
 
-use krossbar_bus_lib::Bus;
+use krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH;
+use krossbar_bus_lib::service::Service;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -9,14 +12,19 @@ async fn main() {
         .filter_level(LevelFilter::Warn)
         .init();
 
-    let mut bus = Bus::register("com.examples.call_method").await.unwrap();
+    let mut service = Service::new(
+        "com.examples.call_method",
+        &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
+    )
+    .await
+    .unwrap();
 
-    let peer_connection = bus
-        .connect("com.examples.register_method".into())
+    let peer_connection = service
+        .connect("com.examples.register_method")
         .await
         .unwrap();
 
-    const NUM_CALLS: usize = 25_000;
+    const NUM_CALLS: usize = 100_000;
 
     let start = std::time::Instant::now();
 
