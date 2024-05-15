@@ -1,6 +1,7 @@
 mod args;
 mod hub;
 mod permissions;
+mod service_names;
 
 use std::path::Path;
 

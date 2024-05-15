@@ -9,10 +9,10 @@ use json::JsonValue;
 use log::*;
 use tokio::net::unix::UCred;
 
-use krossbar_bus_common::{
-    get_service_files_dir, service_names::NamePattern, CONNECT_SERVICE_NAME, MONITOR_SERVICE_NAME,
-};
+use krossbar_bus_common::{CONNECT_SERVICE_NAME, DEFAULT_SERVICE_FILES_DIR, MONITOR_SERVICE_NAME};
 use krossbar_common_rpc::{Error, Result};
+
+use crate::service_names::NamePattern;
 
 const ALLOWED_EXECS_KEY: &str = "exec";
 const INCOMING_CONNS_KEY: &str = "incoming_connections";
@@ -37,9 +37,9 @@ pub struct Permissions {
 impl Permissions {
     /// Creates new permissions handle.
     /// Caller must ensure the directory exists
-    pub fn new(additional_service_dirs: &Vec<String>) -> Self {
+    pub fn new(additional_service_dirs: &Vec<PathBuf>) -> Self {
         let mut service_files_dirs: Vec<PathBuf> = Vec::new();
-        service_files_dirs.push(get_service_files_dir().into());
+        service_files_dirs.push(DEFAULT_SERVICE_FILES_DIR.into());
 
         for dir in additional_service_dirs {
             service_files_dirs.push(dir.into());

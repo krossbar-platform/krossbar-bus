@@ -1,7 +1,13 @@
-use std::{collections::HashMap, io::ErrorKind, pin::Pin, time::Duration};
+use std::{
+    collections::HashMap,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    pin::Pin,
+    time::Duration,
+};
 
 use futures::{future, select, stream::FuturesUnordered, Future, FutureExt, StreamExt};
-use krossbar_bus_common::{get_hub_socket_path, message::HubMessage, HUB_REGISTER_METHOD};
+use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD};
 use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{net::UnixStream, signal::ctrl_c, time};
@@ -33,11 +39,12 @@ pub struct Service {
     client_poll_handles: ClientsStreamType,
     hub_connection: Rpc,
     reconnect_signal: AsyncSignal<crate::Result<()>>,
+    hub_socket_path: PathBuf,
 }
 
 impl Service {
-    pub async fn new(service_name: &str) -> crate::Result<Self> {
-        let hub_connection = Self::hub_connect(service_name).await?;
+    pub async fn new(service_name: &str, hub_socket_path: &Path) -> crate::Result<Self> {
+        let hub_connection = Self::hub_connect(service_name, hub_socket_path).await?;
 
         let clients: ClientsStreamType = FuturesUnordered::new();
         clients.push(Box::pin(future::pending()));
@@ -49,6 +56,7 @@ impl Service {
             client_poll_handles: clients,
             hub_connection,
             reconnect_signal: AsyncSignal::new(),
+            hub_socket_path: hub_socket_path.into(),
         })
     }
 
@@ -161,7 +169,7 @@ impl Service {
                     },
                     // Hub disconnected
                     None => {
-                        match Self::hub_connect(&self.service_name).await {
+                        match Self::hub_connect(&self.service_name, &self.hub_socket_path).await {
                             Ok(hub_connection) => {
                                 self.hub_connection.on_reconnected(hub_connection).await;
                                 self.reconnect_signal.emit(Ok(())).await
@@ -181,7 +189,11 @@ impl Service {
 
     fn handle_new_connection(&mut self, mut request: RpcRequest) {
         let (service_name, stream) = match request.take_body().unwrap() {
-            Body::Fd(service_name, stream) => (service_name, stream),
+            Body::Fd {
+                client_name,
+                stream,
+                ..
+            } => (client_name, stream),
             _ => {
                 error!("Invalid hub request: not a connection request. Please report a bug",);
                 return;
@@ -212,10 +224,9 @@ impl Service {
         self.endpoints.handle_call(request).await
     }
 
-    async fn hub_connect(service_name: &str) -> crate::Result<Rpc> {
-        let hub_socket_path = get_hub_socket_path();
+    async fn hub_connect(service_name: &str, hub_socket_path: &Path) -> crate::Result<Rpc> {
         loop {
-            info!("Connecting to hub at: {}", hub_socket_path);
+            info!("Connecting to hub at: {:?}", hub_socket_path);
 
             match UnixStream::connect(&hub_socket_path).await {
                 Ok(stream) => {
@@ -266,7 +277,7 @@ impl Service {
                                     _ = time::sleep(Duration::from_millis(RECONNECT_ATTEMP_COOLDOWN_MS)).fuse() => {
                                         error!("Hub connection timeout");
 
-                                        return Err(crate::Error::ProtocolError);
+                                        return Err(crate::Error::InternalError("Hub didnt'r return connection response".into()));
                                     }
                                 }
                             }

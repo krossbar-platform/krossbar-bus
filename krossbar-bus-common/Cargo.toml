@@ -22,6 +22,5 @@ inspection = []
 [dependencies]
 colored = "2.1"
 serde = "1.0"
-thiserror = "1.0"
 
 krossbar-common-rpc = "0.3"

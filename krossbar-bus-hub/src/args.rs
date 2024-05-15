@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 use log::LevelFilter;
 
@@ -6,10 +8,14 @@ use log::LevelFilter;
 #[clap(version, about, long_about = None)]
 pub struct Args {
     /// Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE
-    #[clap(short, long, value_parser, default_value_t = LevelFilter::Trace)]
+    #[clap(short, long, default_value_t = LevelFilter::Trace)]
     pub log_level: log::LevelFilter,
 
     /// Additional service files directories
-    #[clap(short, long, value_parser)]
-    pub additional_service_dirs: Vec<String>,
+    #[clap(short, long)]
+    pub additional_service_dirs: Vec<PathBuf>,
+
+    /// Additional service files directories
+    #[clap(short, long)]
+    pub socket_path: PathBuf,
 }

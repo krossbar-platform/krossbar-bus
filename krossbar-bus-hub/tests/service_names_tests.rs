@@ -1,4 +1,4 @@
-use krossbar_bus_common::service_names::NamePattern;
+use krossbar_hub_lib::service_names::NamePattern;
 
 #[test]
 

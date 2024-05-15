@@ -1,4 +1,6 @@
-use std::{collections::HashMap, fs, os::unix::fs::PermissionsExt, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap, fs, os::unix::fs::PermissionsExt, path::PathBuf, pin::Pin, sync::Arc,
+};
 
 use futures::{
     future::{pending, FutureExt as _},
@@ -10,9 +12,7 @@ use futures::{
 use log::{debug, info, warn};
 use tokio::net::{unix::UCred, UnixListener, UnixStream};
 
-use krossbar_bus_common::{
-    get_hub_socket_path, message::HubMessage, HUB_CONNECT_METHOD, HUB_REGISTER_METHOD,
-};
+use krossbar_bus_common::{message::HubMessage, HUB_CONNECT_METHOD, HUB_REGISTER_METHOD};
 use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
 
 use crate::{args::Args, permissions::Permissions};
@@ -28,6 +28,7 @@ struct HubContext {
 
 pub struct Hub {
     tasks: TasksMapType,
+    socket_path: PathBuf,
     context: ContextType,
 }
 
@@ -38,6 +39,7 @@ impl Hub {
 
         Self {
             tasks,
+            socket_path: args.socket_path.clone(),
             context: Arc::new(Mutex::new(HubContext {
                 client_registry: HashMap::new(),
                 pending_connections: HashMap::new(),
@@ -48,23 +50,25 @@ impl Hub {
 
     /// Hub main loop
     pub async fn run(mut self) {
-        let socket_addr = get_hub_socket_path();
-        info!("Hub socket path: {socket_addr}");
+        info!("Hub socket path: {:?}", self.socket_path);
 
-        let listener = match UnixListener::bind(&socket_addr) {
+        let listener = match UnixListener::bind(&self.socket_path) {
             Ok(listener) => listener,
-            Err(_) => {
-                let _ = std::fs::remove_file(&socket_addr);
-                let result = UnixListener::bind(socket_addr).unwrap();
+            Err(e) => {
+                warn!("Failed to start listening: {e:?}. Trying to remove hanging socket");
 
-                info!("Hub started listening for new connections");
+                let _ = std::fs::remove_file(&self.socket_path);
+                let result = UnixListener::bind(&self.socket_path).unwrap();
+
                 result
             }
         };
 
+        info!("Hub started listening for new connections");
+
         // Update permissions to be accessible for th eclient
         let socket_permissions = fs::Permissions::from_mode(0o666);
-        fs::set_permissions(get_hub_socket_path(), socket_permissions).unwrap();
+        fs::set_permissions(&self.socket_path, socket_permissions).unwrap();
 
         async move {
             loop {
@@ -125,7 +129,12 @@ impl Hub {
         let service_name = match rpc.poll().await {
             Some(mut request) => {
                 if request.endpoint() != HUB_REGISTER_METHOD {
-                    request.respond::<()>(Err(Error::ProtocolError)).await;
+                    request
+                        .respond::<()>(Err(Error::InternalError(format!(
+                            "Expected registration call from a client. Got {}",
+                            request.endpoint()
+                        ))))
+                        .await;
                 }
 
                 match request.take_body().unwrap() {
@@ -160,7 +169,11 @@ impl Hub {
                             Ok(m) => {
                                 warn!("Invalid registration message from a client: {m:?}");
 
-                                request.respond::<()>(Err(Error::ProtocolError)).await;
+                                request
+                                    .respond::<()>(Err(Error::InternalError(format!(
+                                        "Invalid register message body: {m:?}"
+                                    ))))
+                                    .await;
                                 return None;
                             }
                             // Message deserialization error
@@ -256,7 +269,10 @@ impl Hub {
     ) {
         match UnixStream::pair() {
             Ok((socket1, socket2)) => {
-                if let Err(e) = target_writer.connection_request(&initiator, socket1).await {
+                if let Err(e) = target_writer
+                    .connection_request(&initiator, target_service, socket1)
+                    .await
+                {
                     warn!(
                         "Failed to send target connection request: {}",
                         e.to_string()
@@ -284,7 +300,12 @@ impl Hub {
             match rpc.poll().await {
                 Some(mut request) => {
                     if request.endpoint() != HUB_CONNECT_METHOD {
-                        request.respond::<()>(Err(Error::ProtocolError)).await;
+                        request
+                            .respond::<()>(Err(Error::InternalError(format!(
+                                "Expected only connection messages from a client. Got {} call",
+                                request.endpoint()
+                            ))))
+                            .await;
                     }
 
                     match request.take_body().unwrap() {
@@ -309,7 +330,11 @@ impl Hub {
                                 Ok(m) => {
                                     warn!("Invalid connection message from a client: {m:?}");
 
-                                    request.respond::<()>(Err(Error::ProtocolError)).await;
+                                    request
+                                        .respond::<()>(Err(Error::InternalError(format!(
+                                            "Invalid connection message body: {m:?}"
+                                        ))))
+                                        .await;
                                     return service_name;
                                 }
                                 // Message deserialization error
