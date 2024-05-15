@@ -17,5 +17,3 @@ keywords = ["rpc", "messaging"]
 [dependencies]
 colored = "2.1"
 serde = "1.0"
-
-krossbar-common-rpc = "0.3.4"
