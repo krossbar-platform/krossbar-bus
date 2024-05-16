@@ -1,3 +1,7 @@
+//! Krossbar bus common data lib
+//!
+//! See [krossbar-bus-lib](https://crates.io/crates/krossbar-bus-lib) for more details
+
 pub mod inspect_data;
 pub mod message;
 

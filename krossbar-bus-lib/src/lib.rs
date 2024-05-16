@@ -1,3 +1,5 @@
+//! ## Krossbar bus lib
+
 pub mod endpoints;
 pub mod service;
 mod signal;

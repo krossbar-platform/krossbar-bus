@@ -1,11 +1,14 @@
-# Krossbar bus lib
-
-Krossbar bus lib
-
+[![Crates.io][crates-badge]][crates-url]
 [![MIT licensed][mit-badge]][mit-url]
 [![Build Status][actions-badge]][actions-url]
 
+[crates-badge]: https://img.shields.io/crates/v/krossbar-bus-lib.svg
+[crates-url]: https://crates.io/crates/krossbar-bus-lib
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/krossbar-platform/krossbar-bus/blob/main/LICENSE
-[actions-badge]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/rust.yml/badge.svg
-[actions-url]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/rust.yml
+[actions-badge]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/ci.yml/badge.svg
+[actions-url]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/ci.yml
+
+# krossbar-bus-lib
+
+### Krossbar bus lib

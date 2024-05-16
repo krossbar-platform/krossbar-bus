@@ -1,6 +1,6 @@
 [package]
 name = "krossbar-bus-hub"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
@@ -31,8 +31,8 @@ serde = "1.0"
 tokio = { version = "1.37", features = ["net", "signal", "rt", "macros"] }
 thiserror = "1.0"
 
-krossbar-bus-common = "0.3.4"
-krossbar-common-rpc = "0.3.4"
+krossbar-bus-common = "0.4.0"
+krossbar-common-rpc = "0.4.3"
 
 [dev-dependencies]
 rstest = "0.19"
