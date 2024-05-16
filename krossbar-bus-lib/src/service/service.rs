@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{future, select, stream::FuturesUnordered, Future, FutureExt, StreamExt};
+use futures::{future, select_biased, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD};
 use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
@@ -82,7 +82,7 @@ impl Service {
         );
 
         // Need to pull self RPC connection to receive hub response
-        let handle = select! {
+        let handle = select_biased! {
             handle = connection_request
             .fuse() => match handle {
                 Ok(handle) => handle,
@@ -141,7 +141,7 @@ impl Service {
     }
 
     pub async fn poll(&mut self) -> crate::Result<()> {
-        select! {
+        select_biased! {
             client_request = self.client_poll_handles.next() => {
                 let (event, poll_handle) = client_request.unwrap();
                 match event {
@@ -241,10 +241,9 @@ impl Service {
                         )
                         .await?;
 
-                    let mut fused_response = registration_response.fuse();
-                    select! {
+                    select_biased! {
                         // Immediate hub response
-                        response = fused_response => {
+                        response = registration_response.fuse() => {
                             return match response {
                                 Ok(()) => {
                                     info!("Succesfully registered as a service: {service_name}");
@@ -256,31 +255,7 @@ impl Service {
                             }
                         }
                         // Need to run `poll` here to receive response
-                        hub_return = rpc.poll().fuse() => {
-                            if hub_return.is_none() {
-                                warn!("Hub dropped the socket during connection request. Trying to receive the response");
-
-                                // Hub dropped the socket, but we still didn't receive the data, so we
-                                // want to try it again. Some code duplication
-                                select! {
-                                    response = fused_response => {
-                                        return match response {
-                                            Ok(()) => {
-                                                info!("Succesfully registered as a service: {service_name}");
-                                                Ok(rpc)
-                                            },
-                                            Err(e) => {
-                                                return Err(e)
-                                            }
-                                        }
-                                    },
-                                    _ = time::sleep(Duration::from_millis(RECONNECT_ATTEMP_COOLDOWN_MS)).fuse() => {
-                                        error!("Hub connection timeout");
-
-                                        return Err(crate::Error::InternalError("Hub didnt'r return connection response".into()));
-                                    }
-                                }
-                            }
+                        _ = rpc.poll().fuse() => {
                             return Err(crate::Error::InternalError("Hub connection early return".to_owned()));
                         },
                     }

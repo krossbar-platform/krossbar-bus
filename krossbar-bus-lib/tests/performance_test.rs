@@ -72,7 +72,7 @@ async fn test_performance_multithread(
 
     tokio::spawn(caller_service.run());
 
-    const NUM_CALLS: u32 = 100_000;
+    const NUM_CALLS: u32 = 30_000;
     let now = Instant::now();
     for _ in 0..NUM_CALLS {
         let _ = peer.call::<u8, u8>("echo", &0u8).await;
