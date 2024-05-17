@@ -10,7 +10,6 @@ use fixture::{make_warn_fixture, Fixture};
 
 // XXX: Don't forget to use release build to test performance:
 // cargo test test_performance_multithread --release -- --nocapture
-// cargo test test_performance_singlethread --release -- --nocapture
 
 #[rstest]
 #[awt]
@@ -82,6 +81,9 @@ async fn test_performance_multithread(
 
     fixture.cancel()
 }
+
+// XXX: Don't forget to use release build to test performance:
+// cargo test test_performance_singlethread --release -- --nocapture
 
 #[rstest]
 #[awt]
