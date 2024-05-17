@@ -32,17 +32,26 @@ const RECONNECT_ATTEMP_COOLDOWN_MS: u64 = 1000;
 type ClientsStreamType =
     FuturesUnordered<Pin<Box<dyn Future<Output = (ClientEvent, ClientHandle)> + Send>>>;
 
+/// Service handle
 pub struct Service {
+    /// Self service name
     service_name: String,
+    /// A set of endpoint
     endpoints: Endpoints,
+    /// A map of connected clients
     client_map: HashMap<String, Client>,
+    /// A map of client futures to poll
     client_poll_handles: ClientsStreamType,
+    /// Self hub connection
     hub_connection: Rpc,
+    /// A handle to signal clients if reconnected
     reconnect_signal: AsyncSignal<crate::Result<()>>,
+    /// Hub socket path
     hub_socket_path: PathBuf,
 }
 
 impl Service {
+    /// Register a service at the hub as a `service_name` service.
     pub async fn new(service_name: &str, hub_socket_path: &Path) -> crate::Result<Self> {
         let hub_connection = Self::hub_connect(service_name, hub_socket_path).await?;
 
@@ -60,15 +69,20 @@ impl Service {
         })
     }
 
+    /// Connect to a `service_name` peer
     pub async fn connect(&mut self, service_name: &str) -> crate::Result<Client> {
         self.connect_impl(service_name, false).await
     }
 
+    /// Connect to a `service_name` peer. Wait for the service to go up if currently offline.
+    ///
+    /// **Note**: this method doesn't return and error if the counterparty is disconnected. Use the resulting
+    /// future to handle incoming connection.
     pub async fn connect_await(&mut self, service_name: &str) -> crate::Result<Client> {
         self.connect_impl(service_name, true).await
     }
 
-    pub async fn connect_impl(&mut self, service_name: &str, wait: bool) -> crate::Result<Client> {
+    async fn connect_impl(&mut self, service_name: &str, wait: bool) -> crate::Result<Client> {
         if let Some(handle) = self.client_map.get_mut(service_name) {
             handle.make_outgoing();
             return Ok(handle.clone());
@@ -105,6 +119,9 @@ impl Service {
         Ok(result)
     }
 
+    /// Register a method. First argument of the function is set to a service name of the caller.
+    ///
+    /// **Note**: You need to poll [Self::run] or [Self::poll] to receive client calls
     pub fn register_method<P, R, Fr, F>(&mut self, name: &str, func: F) -> crate::Result<()>
     where
         P: DeserializeOwned + 'static + Send,
@@ -115,10 +132,12 @@ impl Service {
         self.endpoints.register_method(name, func)
     }
 
+    /// Register a signal
     pub fn register_signal<T: Serialize>(&mut self, name: &str) -> crate::Result<Signal<T>> {
         self.endpoints.register_signal(name)
     }
 
+    /// Register a state
     pub fn register_state<T: Serialize>(
         &mut self,
         name: &str,
@@ -134,12 +153,23 @@ impl Service {
         }));
     }
 
+    /// Run service loop. The method can be used to spawn a polling task if you've got all required service
+    /// handles as it consumes the service.
+    ///
+    /// **Note**: Polling the service is requered to receive incoming connections, and for [Self::register_method],
+    /// [Signal], and [State] to receive incoming calls.
     pub async fn run(mut self) -> crate::Result<()> {
         loop {
             self.poll().await?
         }
     }
 
+    /// Poll incoming messages. The method can be used if you need dynamic service enpoints or client connections.
+    /// It uses mutable handle, which allows using futures
+    /// combinators to poll both the service and the handles (like Tokio `select!`)
+    ///
+    /// **Note**: Polling the service is requered to receive incoming connections, and for [Self::register_method],
+    /// [Signal], and [State] to receive incoming calls.
     pub async fn poll(&mut self) -> crate::Result<()> {
         select_biased! {
             client_request = self.client_poll_handles.next() => {

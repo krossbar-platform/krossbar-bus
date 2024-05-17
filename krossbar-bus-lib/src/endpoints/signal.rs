@@ -35,6 +35,7 @@ impl<T: Serialize> Signal<T> {
         }
     }
 
+    /// Emit the signal. Starts broadcasting `data` to the subscribers
     pub async fn emit(&self, data: T) -> crate::Result<()> {
         debug!("Emitting a signal");
 

@@ -58,15 +58,16 @@ impl<T: Serialize> State<T> {
         })
     }
 
-    pub async fn set(&mut self, data: T) -> crate::Result<()> {
+    /// Set the state to `value`. Starts broadcasting `value` to the subscribers
+    pub async fn set(&mut self, value: T) -> crate::Result<()> {
         debug!("Set a state");
 
-        let bson = match bson::to_bson(&data) {
+        let bson = match bson::to_bson(&value) {
             Ok(bson) => bson,
             Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
         };
 
-        self.value = data;
+        self.value = value;
 
         let mut bson_lock = self.current_value.lock().await;
         *bson_lock = bson;
@@ -91,6 +92,7 @@ impl<T: Serialize> State<T> {
         Ok(())
     }
 
+    /// Get state value
     pub fn get(&self) -> &T {
         &self.value
     }

@@ -7,10 +7,11 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use krossbar_common_rpc::request::{Body, RpcRequest};
 
-use self::{signal::Signal, state::State};
-
 pub mod signal;
 pub mod state;
+
+pub use signal::Signal;
+pub use state::State;
 
 type MethodFunctionType = Box<
     dyn FnMut(String, Bson) -> Pin<Box<dyn Future<Output = crate::Result<Bson>> + Send>> + Send,

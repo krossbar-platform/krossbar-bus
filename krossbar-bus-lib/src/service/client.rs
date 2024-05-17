@@ -17,11 +17,18 @@ use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter};
 
 pub type Stream<T> = Pin<Box<dyn FusedStream<Item = crate::Result<T>>>>;
 
+/// Service connection handle
 #[derive(Clone)]
 pub struct Client {
+    /// Peer service name
     service_name: String,
+    /// Peer writer to send messages
     writer: RpcWriter,
+    /// Hub reconnect signal to wait if hub is down,
+    /// but we need to reconnect to the peer
     reconnect_signal: AsyncSignal<crate::Result<()>>,
+    /// If the connection is outgoing. If it is we try to reconnect to
+    /// the service if connection dropped
     outgoing: Arc<AtomicBool>,
 }
 
@@ -44,24 +51,31 @@ impl Client {
         self.outgoing.store(true, Ordering::Relaxed)
     }
 
+    /// Make a method call. Returns an error immediately if data can't be serialized into [bson::Bson] or
+    /// connection is down. If sends request succesfully, waits for a response.
+    /// Tries to deserialize the response into `R`. Returns an error if types are incompatible.
     pub async fn call<P: Serialize, R: DeserializeOwned>(
         &self,
         endpoint: &str,
-        data: &P,
+        params: &P,
     ) -> crate::Result<R> {
-        match self.writer.call(endpoint, data).await {
+        match self.writer.call(endpoint, params).await {
             Ok(data) => data.await,
             // Client disconnected. Wait for main loop to reconnect
             Err(_) => {
                 if let Err(e) = self.reconnect_signal.wait().await {
                     Err(e)
                 } else {
-                    Box::pin(self.call(endpoint, data)).await
+                    Box::pin(self.call(endpoint, params)).await
                 }
             }
         }
     }
 
+    /// Subscribe to a signal of a state.
+    /// Returns an error immediately if connection is down.
+    /// Returns a stream of signal emissions.
+    /// Tries to deserialize the response into `R`. Returns [None] if failes and stops handling the subscription.
     pub async fn subscribe<R: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<Stream<R>> {
         match self.writer.subscribe(&endpoint).await {
             Ok(data) => Ok(data),
