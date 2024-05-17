@@ -10,17 +10,17 @@ use futures::{
     Future, StreamExt as _,
 };
 use log::{debug, info, warn};
-use tokio::net::{unix::UCred, UnixListener, UnixStream};
+use tokio::net::{unix::UCred, UnixListener};
 
-use krossbar_bus_common::{message::HubMessage, HUB_CONNECT_METHOD, HUB_REGISTER_METHOD};
+use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD};
 use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
 
-use crate::{args::Args, permissions::Permissions};
+use crate::{args::Args, client::Client, permissions::Permissions};
 
 type TasksMapType = FuturesUnordered<Pin<Box<dyn Future<Output = Option<String>> + Send>>>;
-type ContextType = Arc<Mutex<HubContext>>;
+pub type ContextType = Arc<Mutex<HubContext>>;
 
-struct HubContext {
+pub struct HubContext {
     pub client_registry: HashMap<String, RpcWriter>,
     pub pending_connections: HashMap<String, Vec<(String, RpcRequest)>>,
     pub permissions: Permissions,
@@ -201,7 +201,7 @@ impl Hub {
         };
 
         // Cient succesfully authorized. Start client loop
-        Some(Self::client_loop(rpc, service_name, context.clone()).await)
+        Some(Client::new(context.clone(), rpc, service_name).run().await)
     }
 
     /// Handle client Auth message
@@ -235,7 +235,7 @@ impl Hub {
             }
 
             let mut writer = request.writer().clone();
-            Self::resolve_pending_connections(service_name, &mut writer, &mut context_lock).await;
+            Client::resolve_pending_connections(service_name, &mut writer, &mut context_lock).await;
 
             context_lock
                 .client_registry
@@ -244,166 +244,6 @@ impl Hub {
             info!("Client authorized as: {}", service_name);
 
             Ok(())
-        }
-    }
-
-    /// Send stream to services, which wait for the connected service
-    async fn resolve_pending_connections(
-        service_name: &str,
-        stream: &mut RpcWriter,
-        context: &mut HubContext,
-    ) {
-        if let Some(waiters) = context.pending_connections.remove(service_name) {
-            for (initiator, request) in waiters.into_iter() {
-                // Let's check if we have alive initiator
-                Self::send_connection_descriptors(&initiator, request, service_name, stream).await
-            }
-        }
-    }
-
-    async fn send_connection_descriptors(
-        initiator: &str,
-        request: RpcRequest,
-        target_service: &str,
-        target_writer: &RpcWriter,
-    ) {
-        match UnixStream::pair() {
-            Ok((socket1, socket2)) => {
-                if let Err(e) = target_writer
-                    .connection_request(&initiator, target_service, socket1)
-                    .await
-                {
-                    warn!(
-                        "Failed to send target connection request: {}",
-                        e.to_string()
-                    );
-
-                    request
-                        .respond::<Result<()>>(Err(Error::PeerDisconnected))
-                        .await;
-                } else {
-                    request.respond_with_fd(Ok(()), socket2).await;
-                }
-
-                info!("Succefully sent connection request from {initiator} to {target_service}");
-            }
-            Err(e) => {
-                request
-                    .respond::<()>(Err(Error::InternalError(e.to_string())))
-                    .await;
-            }
-        }
-    }
-
-    async fn client_loop(mut rpc: Rpc, service_name: String, context: ContextType) -> String {
-        loop {
-            match rpc.poll().await {
-                Some(mut request) => {
-                    if request.endpoint() != HUB_CONNECT_METHOD {
-                        request
-                            .respond::<()>(Err(Error::InternalError(format!(
-                                "Expected only connection messages from a client. Got {} call",
-                                request.endpoint()
-                            ))))
-                            .await;
-                    }
-
-                    match request.take_body().unwrap() {
-                        // Valid call message
-                        krossbar_common_rpc::request::Body::Call(bson) => {
-                            // Valid Auth message
-                            match bson::from_bson::<HubMessage>(bson) {
-                                Ok(HubMessage::Connect {
-                                    service_name: peer_service_name,
-                                    wait,
-                                }) => {
-                                    Self::handle_connection_request(
-                                        &service_name,
-                                        &peer_service_name,
-                                        request,
-                                        wait,
-                                        &context,
-                                    )
-                                    .await;
-                                }
-                                // Connection request instead of an Auth message
-                                Ok(m) => {
-                                    warn!("Invalid connection message from a client: {m:?}");
-
-                                    request
-                                        .respond::<()>(Err(Error::InternalError(format!(
-                                            "Invalid connection message body: {m:?}"
-                                        ))))
-                                        .await;
-                                    return service_name;
-                                }
-                                // Message deserialization error
-                                Err(e) => {
-                                    warn!("Invalid connection message body from a client: {e:?}");
-
-                                    request
-                                        .respond::<()>(Err(Error::InternalError(e.to_string())))
-                                        .await;
-                                    return service_name;
-                                }
-                            }
-                        }
-                        // Not a call, but respond, of FD or other irrelevant message
-                        _ => {
-                            warn!("Invalid connection message from a client (not a call)");
-                            return service_name;
-                        }
-                    }
-                }
-                _ => return service_name,
-            }
-        }
-    }
-
-    async fn handle_connection_request(
-        service_name: &str,
-        target_service: &str,
-        request: RpcRequest,
-        add_pending: bool,
-        context: &ContextType,
-    ) {
-        info!(
-            "Incoming connection request from {} to {}",
-            service_name, service_name
-        );
-
-        let mut context_lock = context.lock().await;
-
-        // Check if service allowed to connect
-        if !context_lock
-            .permissions
-            .check_connection_allowed(service_name, target_service)
-        {
-            request.respond::<()>(Err(Error::NotAllowed)).await;
-            return;
-        }
-
-        match context_lock.client_registry.get(target_service) {
-            Some(target_writer) => {
-                Self::send_connection_descriptors(
-                    service_name,
-                    request,
-                    target_service,
-                    target_writer,
-                )
-                .await
-            }
-            _ => {
-                if !add_pending {
-                    request.respond::<()>(Err(Error::ServiceNotFound)).await;
-                } else {
-                    context_lock
-                        .pending_connections
-                        .entry(target_service.to_owned())
-                        .or_default()
-                        .push((service_name.to_owned(), request));
-                }
-            }
         }
     }
 }

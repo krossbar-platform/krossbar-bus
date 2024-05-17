@@ -49,6 +49,7 @@
 //! ```
 
 mod args;
+mod client;
 mod hub;
 mod permissions;
 mod service_names;

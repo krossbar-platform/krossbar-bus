@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use krossbar_bus_lib::service::Service;
+use log::info;
 use rstest::rstest;
 use tokio::time;
 
@@ -241,21 +242,24 @@ async fn test_await_connection(
     fixture.write_service_file(service_name, service_file_json);
 
     let socket_path = fixture.hub_socket_path().clone();
-    let join = tokio::spawn(async move {
-        let mut bus2 = Service::new(service_name, &socket_path)
-            .await
-            .expect("Failed to register service");
 
-        bus2.connect_await(target_service_name)
-            .await
-            .expect("Allowed connection failed");
-    });
-
-    let _bus1 = Service::new(target_service_name, fixture.hub_socket_path())
+    let mut init_service = Service::new(service_name, &socket_path)
         .await
         .expect("Failed to register service");
 
-    join.await.expect("Failed to join connection");
+    let awaited_client = init_service.connect_await(target_service_name);
+
+    // Wait some time
+    time::sleep(Duration::from_millis(50)).await;
+
+    let target_service = Service::new(target_service_name, fixture.hub_socket_path())
+        .await
+        .expect("Failed to register service");
+
+    tokio::spawn(target_service.run());
+
+    awaited_client.await.unwrap();
+    info!("Succesfully recieved awaited connection");
 
     fixture.cancel();
 }
