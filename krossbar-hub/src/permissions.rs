@@ -268,6 +268,12 @@ impl Permissions {
 
     /// Returns if service allows to connect to any counterparty
     fn is_previleged_service(&self, service_name: &str) -> bool {
-        service_name == MONITOR_SERVICE_NAME || service_name == CONNECT_SERVICE_NAME
+        #[cfg(not(feature = "privileged-services"))]
+        return false;
+
+        #[cfg(feature = "privileged-services")]
+        {
+            service_name == MONITOR_SERVICE_NAME || service_name == CONNECT_SERVICE_NAME
+        }
     }
 }

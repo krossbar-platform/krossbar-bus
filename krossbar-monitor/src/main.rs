@@ -1,23 +1,22 @@
+use std::path::PathBuf;
+
 use clap::{self, Parser};
 use colored::*;
+use krossbar_bus_common::{DEFAULT_HUB_SOCKET_PATH, MONITOR_SERVICE_NAME};
+use krossbar_bus_lib::Service;
+use krossbar_common_rpc::monitor::MonitorMessage;
 use log::{LevelFilter, *};
-
-use krossbar_bus_common::{
-    messages::Message,
-    monitor::{MonitorMessage, MonitorMessageDirection, MONITOR_METHOD, MONITOR_SERVICE_NAME},
-};
-use krossbar_bus_lib::Bus;
 
 /// Krossbar bus monitor
 #[derive(Parser, Debug)]
 #[clap(version, about, long_about = None)]
 pub struct Args {
     /// Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE
-    #[clap(short, long, value_parser, default_value_t = LevelFilter::Warn)]
+    #[clap(short, long, default_value_t = LevelFilter::Warn)]
     pub log_level: log::LevelFilter,
 
     /// Service to monitor
-    #[clap(value_parser)]
+    #[clap()]
     pub target_service: String,
 }
 
@@ -43,7 +42,7 @@ fn short_name(name: &String, target_service: bool) -> String {
     result
 }
 
-fn handle_message(monitor_message: &MonitorMessage) {
+async fn handle_message(monitor_message: &MonitorMessage) {
     let message = bson::from_bson::<Message>(monitor_message.message.clone())
         .expect("Failed to deserialize bus message ");
 
@@ -70,9 +69,9 @@ fn handle_message(monitor_message: &MonitorMessage) {
     );
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    debug!("Starting Krossbar hub");
+    debug!("Starting Krossbar monitor");
 
     let args = Args::parse();
 
@@ -80,16 +79,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(args.log_level)
         .init();
 
-    let mut bus = Bus::register(MONITOR_SERVICE_NAME)
-        .await
-        .expect("Failed to register monitor");
+    let mut service = Service::new(
+        MONITOR_SERVICE_NAME,
+        &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
+    )
+    .await
+    .expect("Failed to register monitor");
 
-    bus.register_method(MONITOR_METHOD, |message: MonitorMessage| async move {
-        handle_message(&message)
-    })
-    .expect("Failed to register signalling function");
+    service
+        .register_method(MONITOR_METHOD, |message: MonitorMessage| async move {
+            handle_message(&message)
+        })
+        .expect("Failed to register signalling function");
 
-    let _peer = bus
+    let _peer = service
         .connect_await(&args.target_service)
         .await
         .expect("Failed to connect to the target service");

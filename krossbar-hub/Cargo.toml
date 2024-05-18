@@ -1,6 +1,6 @@
 [package]
 name = "krossbar-hub"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
@@ -13,6 +13,11 @@ Krossbar bus hub
 """
 categories = ["network-programming"]
 keywords = ["rpc", "messaging"]
+
+[features]
+default = ["privileged-services"]
+# add krossbar-bus and krossbar-connect support
+privileged-services = []
 
 [lib]
 name = "krossbar_hub_lib"

@@ -1,12 +1,7 @@
 //! Krossbar bus common data lib
 //!
 //! See [krossbar-bus-lib](https://crates.io/crates/krossbar-bus-lib) for more details
-
-pub mod inspect_data;
-pub mod message;
-
-pub const HUB_CONNECT_METHOD: &str = "connect";
-pub const HUB_REGISTER_METHOD: &str = "register";
+pub mod protocols;
 
 pub const MONITOR_SERVICE_NAME: &str = "krossbar.monitor";
 pub const CONNECT_SERVICE_NAME: &str = "krossbar.connect";

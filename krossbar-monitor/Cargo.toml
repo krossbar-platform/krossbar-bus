@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bson = "2.3"
-clap = { version = "3.2", features = ["derive", "color"] }
-colored = "2.0.0"
+bson = "2.10"
+clap = { version = "4.5", features = ["derive", "color"] }
+colored = "2.1"
 log = "0.4"
-pretty_env_logger = "0.4"
-tokio = { version = "1.19", features = ["macros"] }
+pretty_env_logger = "0.5"
+tokio = { version = "1.37", features = ["macros", "rt"] }
 
-krossbar-bus-lib = { path = "../krossbar-bus-lib" }
-krossbar-bus-common = { path = "../krossbar-bus-common" }
+krossbar-common-rpc = "0.4.3"
+krossbar-bus-lib = "0.4.3"
+krossbar-bus-common = "0.4.0"

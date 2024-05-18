@@ -7,12 +7,13 @@ use std::{
 };
 
 use futures::{future, select_biased, stream::FuturesUnordered, Future, FutureExt, StreamExt};
-use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD};
+use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD, MONITOR_SERVICE_NAME};
 use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{net::UnixStream, signal::ctrl_c, time};
 
 use krossbar_common_rpc::{
+    monitor::Monitor,
     request::{Body, RpcRequest},
     rpc::Rpc,
 };
@@ -195,7 +196,7 @@ impl Service {
                 match hub_request {
                     // Incoming peer connection
                     Some(request) => {
-                        self.handle_new_connection(request)
+                        self.handle_new_connection(request).await
                     },
                     // Hub disconnected
                     None => {
@@ -217,7 +218,7 @@ impl Service {
         Ok(())
     }
 
-    fn handle_new_connection(&mut self, mut request: RpcRequest) {
+    async fn handle_new_connection(&mut self, mut request: RpcRequest) {
         let (service_name, stream) = match request.take_body().unwrap() {
             Body::Fd {
                 client_name,
@@ -229,6 +230,12 @@ impl Service {
                 return;
             }
         };
+
+        #[cfg(feature = "monitor")]
+        if service_name == MONITOR_SERVICE_NAME {
+            Monitor::set(stream).await;
+            return;
+        }
 
         let poll_handle = ClientHandle::new(
             service_name.clone(),
