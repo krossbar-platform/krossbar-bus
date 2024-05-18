@@ -78,7 +78,7 @@ impl Hub {
                         match client {
                             Ok((stream, _)) => {
                                 let credentials = stream.peer_cred();
-                                let rpc = Rpc::new(stream);
+                                let rpc = Rpc::new(stream, "");
 
                                 match credentials {
                                     Ok(credentials) => {

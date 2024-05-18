@@ -11,6 +11,6 @@ log = "0.4"
 pretty_env_logger = "0.5"
 tokio = { version = "1.37", features = ["macros", "rt"] }
 
-krossbar-bus-lib = "0.4.3"
-krossbar-common-rpc = "*"
-krossbar-bus-common = "*"
+krossbar-common-rpc = "0.5.1"
+krossbar-bus-lib = "0.4.4"
+krossbar-bus-common = "0.4.1"

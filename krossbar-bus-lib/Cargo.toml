@@ -1,6 +1,6 @@
 [package]
 name = "krossbar-bus-lib"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
@@ -28,7 +28,7 @@ serde = "1.0"
 tokio = { version = "1.37", features = ["net", "time", "signal"] }
 
 krossbar-bus-common = "0.4.1"
-krossbar-common-rpc = "0.4.3"
+krossbar-common-rpc = "0.5.1"
 
 [dev-dependencies]
 pretty_env_logger = "0.4"

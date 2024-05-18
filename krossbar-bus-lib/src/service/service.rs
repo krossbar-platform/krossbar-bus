@@ -242,7 +242,7 @@ impl Service {
 
         let poll_handle = ClientHandle::new(
             service_name.clone(),
-            Rpc::new(stream),
+            Rpc::new(stream, &service_name),
             self.hub_connection.writer().clone(),
             self.reconnect_signal.clone(),
             false,
@@ -270,7 +270,7 @@ impl Service {
 
             match UnixStream::connect(&hub_socket_path).await {
                 Ok(stream) => {
-                    let mut rpc = Rpc::new(stream);
+                    let mut rpc = Rpc::new(stream, service_name);
 
                     let registration_response = rpc
                         .call::<HubMessage, ()>(

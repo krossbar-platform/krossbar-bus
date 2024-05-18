@@ -4,7 +4,7 @@ use clap::{self, Parser};
 use colored::*;
 use krossbar_bus_common::{DEFAULT_HUB_SOCKET_PATH, MONITOR_SERVICE_NAME};
 use krossbar_bus_lib::Service;
-use krossbar_common_rpc::monitor::MonitorMessage;
+use krossbar_common_rpc::monitor::{Direction, MonitorMessage, MESSAGE_METHOD};
 use log::{LevelFilter, *};
 
 /// Krossbar bus monitor
@@ -42,25 +42,22 @@ fn short_name(name: &String, target_service: bool) -> String {
     result
 }
 
-async fn handle_message(monitor_message: &MonitorMessage) {
-    let message = bson::from_bson::<Message>(monitor_message.message.clone())
-        .expect("Failed to deserialize bus message ");
-
+async fn handle_message(service_name: &str, monitor_message: &MonitorMessage) {
     let direction_symbol = match monitor_message.direction {
-        MonitorMessageDirection::Incoming => "<<<".bright_green(),
-        MonitorMessageDirection::Outgoing => ">>>".bright_blue(),
+        Direction::Incoming => "<<<".bright_green(),
+        Direction::Outgoing => ">>>".bright_blue(),
     };
 
     println!(
         "{} {} {}: {}{}{} {}",
         short_name(
-            &monitor_message.receiver,
-            monitor_message.direction == MonitorMessageDirection::Incoming
+            service_name,
+            monitor_message.direction == Direction::Incoming
         ),
         direction_symbol,
         short_name(
-            &monitor_message.sender,
-            monitor_message.direction == MonitorMessageDirection::Outgoing
+            &monitor_message.peer_name,
+            monitor_message.direction == Direction::Outgoing
         ),
         "[".bright_yellow(),
         message.seq(),
@@ -87,9 +84,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .expect("Failed to register monitor");
 
     service
-        .register_method(MONITOR_METHOD, |message: MonitorMessage| async move {
-            handle_message(&message)
-        })
+        .register_method(
+            MESSAGE_METHOD,
+            |service_name: String, message: MonitorMessage| async move {
+                handle_message(&service_name, &message).await
+            },
+        )
         .expect("Failed to register signalling function");
 
     let _peer = service
@@ -98,8 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to connect to the target service");
 
     debug!("Succesfully connected to the peer. Listening");
+
     let _ = tokio::signal::ctrl_c().await;
-    debug!("Shutting down");
+    debug!("Shutting monitor down");
 
     Ok(())
 }
