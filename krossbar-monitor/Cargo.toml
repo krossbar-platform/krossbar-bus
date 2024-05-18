@@ -1,16 +1,15 @@
 [package]
-name = "krossbar-bus-connect"
+name = "krossbar-monitor"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-serde_json = "1.0"
+bson = "2.3"
 clap = { version = "3.2", features = ["derive", "color"] }
 colored = "2.0.0"
 log = "0.4"
 pretty_env_logger = "0.4"
 tokio = { version = "1.19", features = ["macros"] }
-rustyline = "10.0.0"
 
 krossbar-bus-lib = { path = "../krossbar-bus-lib" }
 krossbar-bus-common = { path = "../krossbar-bus-common" }

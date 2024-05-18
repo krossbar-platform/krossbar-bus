@@ -3,8 +3,8 @@ resolver = "2"
 
 members = [
     "krossbar-bus-common",
-    # "krossbar-bus-connect",
-    "krossbar-bus-hub",
-    # "krossbar-bus-monitor",
     "krossbar-bus-lib",
+    # "krossbar-connect",
+    # "krossbar-monitor",
+    "krossbar-hub",
 ]

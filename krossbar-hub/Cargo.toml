@@ -1,5 +1,5 @@
 [package]
-name = "krossbar-bus-hub"
+name = "krossbar-hub"
 version = "0.4.1"
 edition = "2021"
 rust-version = "1.75"
