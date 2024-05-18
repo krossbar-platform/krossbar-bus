@@ -1,3 +1,27 @@
+//! ## Krossbar bus monitor
+//!
+//! Krossbar monitor allows connecting to Krossbar services to monitor message exchange.
+//!
+//! **Note**: To be able to use monitor, you need corresponding features, which are enabled bu default:
+//! - `privileged-services` hub feature, which allows using Krossbar tools;
+//! - `monitor` Krossbar bus library feature, which adds monitoring support to a service.
+//!
+//! ## Usage
+//! ```sh
+//! Krossbar bus monitor
+//!
+//! Usage: krossbar-monitor [OPTIONS] <TARGET_SERVICE>
+//!
+//! Arguments:
+//!   <TARGET_SERVICE>  Service to monitor
+//!
+//! Options:
+//!   -l, --log-level <LOG_LEVEL>  Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE [default: WARN]
+//!   -h, --help                   Print help
+//!   -V, --version                Print version
+//! ```
+//!
+
 use std::path::PathBuf;
 
 use clap::{self, Parser};

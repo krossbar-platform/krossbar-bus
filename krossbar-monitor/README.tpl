@@ -2,8 +2,8 @@
 [![MIT licensed][mit-badge]][mit-url]
 [![Build Status][actions-badge]][actions-url]
 
-[crates-badge]: https://img.shields.io/crates/v/krossbar-hub.svg
-[crates-url]: https://crates.io/crates/krossbar-hub
+[crates-badge]: https://img.shields.io/crates/v/krossbar-monitor.svg
+[crates-url]: https://crates.io/crates/krossbar-monitor
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/krossbar-platform/krossbar-bus/blob/main/LICENSE
 [actions-badge]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/ci.yml/badge.svg
