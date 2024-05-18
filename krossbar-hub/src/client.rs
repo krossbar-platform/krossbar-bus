@@ -110,7 +110,7 @@ impl Client {
         match UnixStream::pair() {
             Ok((socket1, socket2)) => {
                 if let Err(e) = target_writer
-                    .connection_request(&initiator, target_service, socket1)
+                    .connection_request(initiator, target_service, socket1)
                     .await
                 {
                     warn!(

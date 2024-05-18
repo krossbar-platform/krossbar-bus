@@ -50,7 +50,7 @@ fn short_name(name: &str, target_service: bool) -> String {
 
     for (i, section) in sections.iter().enumerate() {
         if i < (sections.len() - 1) {
-            result.push(section.chars().nth(0).unwrap());
+            result.push(section.chars().next().unwrap());
             result.push('.');
         } else {
             let last_section = if target_service {

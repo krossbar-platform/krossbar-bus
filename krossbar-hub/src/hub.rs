@@ -58,9 +58,7 @@ impl Hub {
                 warn!("Failed to start listening: {e:?}. Trying to remove hanging socket");
 
                 let _ = std::fs::remove_file(&self.socket_path);
-                let result = UnixListener::bind(&self.socket_path).unwrap();
-
-                result
+                UnixListener::bind(&self.socket_path).unwrap()
             }
         };
 
@@ -222,7 +220,7 @@ impl Hub {
                 service_name
             );
 
-            return Err(Error::AlreadyRegistered);
+            Err(Error::AlreadyRegistered)
         // The only valid Auth request path
         } else {
             if !context_lock

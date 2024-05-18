@@ -68,7 +68,7 @@ impl NamePattern {
             return Err(NameError::NameContainsAsterisk);
         }
 
-        let name_sections: Vec<&str> = service_name.split(".").collect();
+        let name_sections: Vec<&str> = service_name.split('.').collect();
 
         if name_sections.contains(&"") {
             return Err(NameError::EmptySection);

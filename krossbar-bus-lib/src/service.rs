@@ -248,6 +248,7 @@ impl Service {
             false,
         );
 
+        #[allow(clippy::map_entry)]
         if self.client_map.contains_key(&service_name) {
             warn!("Multiple service {} connection requested", service_name)
         } else {

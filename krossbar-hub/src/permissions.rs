@@ -63,7 +63,7 @@ impl Permissions {
 
         let process_exe_path = format!("/proc/{}/exe", pid);
 
-        let service_exec = match read_link(&process_exe_path) {
+        let service_exec = match read_link(process_exe_path) {
             Ok(buf) => buf.to_str().unwrap().to_string(),
             _ => {
                 warn!("Failed to get exec path for PID {}", pid);
@@ -126,7 +126,8 @@ impl Permissions {
             Err(glob_err) => {
                 warn!( "Invalid `{}` entry in a service file. Failed to parse the entry as a GLOB patter: {}",
                 ALLOWED_EXECS_KEY, glob_err.to_string());
-                return Err(Error::NotAllowed);
+
+                Err(Error::NotAllowed)
             }
         }
     }
@@ -260,7 +261,8 @@ impl Permissions {
                     "Failed to parse service file at `{path:?}`: {}",
                     parse_error.to_string()
                 );
-                return Err(Error::NotAllowed);
+
+                Err(Error::NotAllowed)
             }
             Ok(value) => Ok(value),
         }
