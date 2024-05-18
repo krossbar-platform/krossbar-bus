@@ -97,7 +97,7 @@ impl Client {
     /// Returns a stream of signal emissions.
     /// Tries to deserialize the response into `R`. Returns [None] if failes and stops handling the subscription.
     pub async fn subscribe<R: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<Stream<R>> {
-        match self.writer.subscribe(&endpoint).await {
+        match self.writer.subscribe(endpoint).await {
             Ok(data) => Ok(data),
             // Client disconnected. Wait for main loop to reconnect
             Err(_) => {
@@ -166,7 +166,7 @@ impl ClientHandle {
         .await?;
         Ok(Self {
             service_name,
-            rpc: rpc,
+            rpc,
             hub_connection,
             hub_reconnect_signal,
             outgoing: Arc::new(false.into()),
@@ -193,13 +193,14 @@ impl ClientHandle {
                 // Client disconnected
                 if self.outgoing.load(Ordering::Relaxed) {
                     // Failing handshake means we've lost permissions to connect
-                    if let Err(_) = Self::hub_connect(
+                    if Self::hub_connect(
                         &self.hub_connection,
                         &self.hub_reconnect_signal,
                         &self.service_name,
                         self.wait_connect,
                     )
                     .await
+                    .is_err()
                     {
                         self.reconnect_signal
                             .emit(Err(crate::Error::PeerDisconnected))
@@ -250,9 +251,7 @@ impl ClientHandle {
                         "Failed to reconnect to a client: {e:?}. Hub is down. Waiting to reconnect"
                     );
 
-                    if let Err(e) = hub_reconnect_signal.wait().await {
-                        return Err(e);
-                    }
+                    hub_reconnect_signal.wait().await?
                 }
             }
         }

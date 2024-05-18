@@ -17,6 +17,7 @@ type MethodFunctionType = Box<
     dyn FnMut(String, Bson) -> Pin<Box<dyn Future<Output = crate::Result<Bson>> + Send>> + Send,
 >;
 
+#[derive(Default)]
 pub struct Endpoints {
     methods: HashMap<String, MethodFunctionType>,
     signals: HashMap<String, signal::Handle>,
@@ -24,14 +25,6 @@ pub struct Endpoints {
 }
 
 impl Endpoints {
-    pub fn new() -> Self {
-        Self {
-            methods: HashMap::new(),
-            signals: HashMap::new(),
-            states: HashMap::new(),
-        }
-    }
-
     pub async fn handle_call(&mut self, client_name: &str, mut request: RpcRequest) {
         match request.take_body().unwrap() {
             Body::Message(body) => {

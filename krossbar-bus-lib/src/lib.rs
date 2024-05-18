@@ -104,11 +104,13 @@
 //! See [examples dir](https://github.com/krossbar-platform/krossbar-bus/tree/main/krossbar-bus-lib/examples) for usage examples
 //!
 
+pub mod client;
 pub mod endpoints;
 pub mod service;
 mod signal;
 
 pub use krossbar_common_rpc::{Error, Result};
 
+pub use client::Client;
 pub use endpoints::{Signal, State};
-pub use service::{Client, Service};
+pub use service::Service;

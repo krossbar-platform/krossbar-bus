@@ -64,7 +64,7 @@ impl Service {
 
         Ok(Self {
             service_name: service_name.to_owned(),
-            endpoints: Endpoints::new(),
+            endpoints: Endpoints::default(),
             client_map: HashMap::new(),
             client_poll_handles: clients,
             hub_connection,
