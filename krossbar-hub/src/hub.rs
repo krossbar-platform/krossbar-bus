@@ -12,7 +12,7 @@ use futures::{
 use log::{debug, info, warn};
 use tokio::net::{unix::UCred, UnixListener};
 
-use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD};
+use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_REGISTER_METHOD};
 use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
 
 use crate::{args::Args, client::Client, permissions::Permissions};

@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures::stream::FusedStream;
-use krossbar_bus_common::{message::HubMessage, HUB_CONNECT_METHOD};
+use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 

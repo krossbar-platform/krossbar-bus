@@ -1,6 +1,6 @@
 [package]
 name = "krossbar-monitor"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,6 @@ log = "0.4"
 pretty_env_logger = "0.5"
 tokio = { version = "1.37", features = ["macros", "rt"] }
 
-krossbar-common-rpc = "0.4.3"
 krossbar-bus-lib = "0.4.3"
-krossbar-bus-common = "0.4.0"
+krossbar-common-rpc = "*"
+krossbar-bus-common = "*"

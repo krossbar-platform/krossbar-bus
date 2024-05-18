@@ -1,4 +1,4 @@
-use krossbar_bus_common::{message::HubMessage, HUB_CONNECT_METHOD};
+use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 use log::{info, warn};
 use tokio::net::UnixStream;
 

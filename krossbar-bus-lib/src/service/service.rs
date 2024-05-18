@@ -7,7 +7,10 @@ use std::{
 };
 
 use futures::{future, select_biased, stream::FuturesUnordered, Future, FutureExt, StreamExt};
-use krossbar_bus_common::{message::HubMessage, HUB_REGISTER_METHOD, MONITOR_SERVICE_NAME};
+use krossbar_bus_common::{
+    protocols::hub::{Message as HubMessage, HUB_REGISTER_METHOD},
+    MONITOR_SERVICE_NAME,
+};
 use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{net::UnixStream, signal::ctrl_c, time};

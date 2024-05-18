@@ -5,6 +5,6 @@ members = [
     "krossbar-bus-common",
     "krossbar-bus-lib",
     # "krossbar-connect",
-    "krossbar-monitor",
+    # "krossbar-monitor",
     "krossbar-hub",
 ]
