@@ -34,6 +34,21 @@ impl Endpoints {
 
     pub async fn handle_call(&mut self, client_name: &str, mut request: RpcRequest) {
         match request.take_body().unwrap() {
+            Body::Message(body) => {
+                if let Some(method) = self.methods.get_mut(request.endpoint()) {
+                    debug!(
+                        "One-way message. Name: {}. Body: {body:?}",
+                        request.endpoint()
+                    );
+
+                    let _ = method(client_name.to_owned(), body).await;
+                } else {
+                    warn!(
+                        "Unknown one-way message endpoint requested: {}",
+                        request.endpoint()
+                    );
+                }
+            }
             Body::Call(params) => {
                 if let Some(method) = self.methods.get_mut(request.endpoint()) {
                     debug!(

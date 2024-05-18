@@ -72,6 +72,26 @@ impl Client {
         }
     }
 
+    /// Get a remote state value. Equals to `call::<R, ()>(endpoint, &())`
+    pub async fn get<R: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<R> {
+        self.call(endpoint, &()).await
+    }
+
+    /// Send a one-way message. Equals to a `call` w/o expecting the call result
+    pub async fn message<P: Serialize>(&self, endpoint: &str, body: &P) -> crate::Result<()> {
+        match self.writer.send_message(endpoint, body).await {
+            Ok(data) => Ok(data),
+            // Client disconnected. Wait for main loop to reconnect
+            Err(_) => {
+                if let Err(e) = self.reconnect_signal.wait().await {
+                    Err(e)
+                } else {
+                    Box::pin(self.message(endpoint, body)).await
+                }
+            }
+        }
+    }
+
     /// Subscribe to a signal of a state.
     /// Returns an error immediately if connection is down.
     /// Returns a stream of signal emissions.
