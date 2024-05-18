@@ -20,7 +20,7 @@ pub struct Args {
     pub target_service: String,
 }
 
-fn short_name(name: &String, target_service: bool) -> String {
+fn short_name(name: &str, target_service: bool) -> String {
     let sections: Vec<&str> = name.split('.').collect();
     let mut result = String::new();
 
@@ -43,26 +43,20 @@ fn short_name(name: &String, target_service: bool) -> String {
 }
 
 async fn handle_message(service_name: &str, monitor_message: &MonitorMessage) {
-    let direction_symbol = match monitor_message.direction {
-        Direction::Incoming => "<<<".bright_green(),
-        Direction::Outgoing => ">>>".bright_blue(),
+    let (direction_symbol, self_is_target) = match monitor_message.direction {
+        Direction::Incoming => ("<<<".bright_green(), true),
+        Direction::Outgoing => (">>>".bright_blue(), false),
     };
 
     println!(
-        "{} {} {}: {}{}{} {}",
-        short_name(
-            service_name,
-            monitor_message.direction == Direction::Incoming
-        ),
+        "{} {} {}: {}{}{} {:?}",
+        short_name(service_name, self_is_target),
         direction_symbol,
-        short_name(
-            &monitor_message.peer_name,
-            monitor_message.direction == Direction::Outgoing
-        ),
+        short_name(&monitor_message.peer_name, !self_is_target),
         "[".bright_yellow(),
-        message.seq(),
+        monitor_message.message.id,
         "]".bright_yellow(),
-        message.body()
+        monitor_message.message.data
     );
 }
 
