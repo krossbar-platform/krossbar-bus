@@ -1,25 +1,28 @@
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use clap::{self, Parser};
 use colored::*;
+use futures::StreamExt;
 use log::{LevelFilter, *};
-use rustyline::error::ReadlineError;
-use rustyline::{ColorMode, Config, Editor, Result};
+use rustyline::{error::ReadlineError, ColorMode, Config, DefaultEditor, Result};
 use serde_json::Value;
 
-use krossbar_bus_common::inspect_data::CONNECT_SERVICE_NAME;
-use krossbar_bus_lib::{peer::Peer, Bus};
+use krossbar_bus_common::{
+    protocols::connect::{InspectData, INSPECT_METHOD},
+    CONNECT_SERVICE_NAME, DEFAULT_HUB_SOCKET_PATH,
+};
+use krossbar_bus_lib::{Client, Service};
 
 /// Krossbar bus connect
 #[derive(Parser, Debug)]
 #[clap(version, about, long_about = None)]
 pub struct Args {
     /// Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE
-    #[clap(short, long, value_parser, default_value_t = LevelFilter::Warn)]
+    #[clap(short, long, default_value_t = LevelFilter::Warn)]
     pub log_level: log::LevelFilter,
 
     /// Service to connect to
-    #[clap(value_parser)]
+    #[clap()]
     pub target_service: String,
 }
 
@@ -41,10 +44,6 @@ fn print_help() {
         "\t{} {{signal_name}} Subscribe on the signal",
         "subscribe".bright_yellow()
     );
-    println!(
-        "\t{} {{state_name}} Watch for the state changes",
-        "watch".bright_yellow()
-    );
     println!("\t{} Quit", "q".bright_blue());
 }
 
@@ -58,11 +57,11 @@ fn format_response(endpoint_type: &str, endpoint_name: &str, json: &Value) {
     );
 }
 
-async fn handle_input_line(service: &mut Peer, line: &String) -> bool {
+async fn handle_input_line(client: &mut Client, line: &String, service_name: &str) -> bool {
     let words: Vec<&str> = line.split(' ').collect();
 
     if words.len() == 0 {
-        println!("Empty input. Type 'help' to get list of commands");
+        eprintln!("Empty input. Type 'help' to get list of commands");
     }
 
     if line == "help" {
@@ -72,14 +71,14 @@ async fn handle_input_line(service: &mut Peer, line: &String) -> bool {
         return true;
     } else if words[0] == "call" {
         if words.len() != 3 {
-            println!("Ivalid number of 'call' arguments given. Use 'help' to see command syntax");
+            eprintln!("Ivalid number of 'call' arguments given. Use 'help' to see command syntax");
             return false;
         }
 
         let json = match Value::from_str(words[2]) {
             Ok(value) => value,
             Err(err) => {
-                println!(
+                eprintln!(
                     "Failed to parse 'call' argument: {}. Should be a valid JSON",
                     err.to_string()
                 );
@@ -87,74 +86,55 @@ async fn handle_input_line(service: &mut Peer, line: &String) -> bool {
             }
         };
 
-        match service.call(words[1], &json).await {
+        match client.call(words[1], &json).await {
             Ok(response) => format_response("Method", words[1], &response),
             Err(err) => {
-                println!("Failed to make a call: {}", err.to_string())
+                eprintln!("Failed to make a call: {}", err.to_string())
             }
         }
     } else if words[0] == "subscribe" {
         if words.len() != 2 {
-            println!("Ivalid number of 'subscribe' arguments given: no signal name given. Use 'help' to see command syntax");
+            eprintln!("Ivalid number of 'subscribe' arguments given: no signal name given. Use 'help' to see command syntax");
             return false;
         }
 
         let signal_name: String = words[1].into();
-        if let Err(err) = service
-            .subscribe(words[1], move |json: Value| {
-                let endpoint_name = signal_name.clone();
-                async move {
-                    format_response("Signal", &endpoint_name, &json);
-                }
-            })
-            .await
-        {
-            println!(
-                "Failed to subscribe to the signal '{}': {}",
-                words[1],
-                err.to_string()
-            )
-        }
-    } else if words[0] == "watch" {
-        if words.len() != 2 {
-            println!("Ivalid number of 'watch' arguments given: no state name given. Use 'help' to see command syntax");
-            return false;
-        }
+        match client.subscribe::<Value>(words[1]).await {
+            Ok(mut stream) => {
+                while let Some(value_result) = stream.next().await {
+                    match value_result {
+                        Ok(json) => format_response("Signal", &signal_name, &json),
+                        Err(err) => {
+                            eprintln!(
+                                "Error subscribing to a signal '{}': {}",
+                                words[1],
+                                err.to_string()
+                            );
 
-        let state_name: String = words[1].into();
-        match service
-            .watch(words[1], move |json: Value| {
-                let endpoint_name = state_name.clone();
-                async move {
-                    format_response("State", &endpoint_name, &json);
+                            return false;
+                        }
+                    }
                 }
-            })
-            .await
-        {
-            Ok(value) => format_response("State", words[1], &value),
-            Err(err) => println!(
-                "Failed to subscribe to the state '{}': {}",
-                words[1],
-                err.to_string()
-            ),
+            }
+            Err(err) => {
+                eprintln!(
+                    "Failed to subscribe to the signal '{}': {}",
+                    words[1],
+                    err.to_string()
+                )
+            }
         }
     } else if words[0] == "inspect" {
-        match service
-            .call::<(), krossbar_bus_common::inspect_data::InspectData>(
-                krossbar_bus_common::inspect_data::INSPECT_METHOD,
-                &(),
-            )
-            .await
-        {
+        match client.get::<InspectData>(INSPECT_METHOD).await {
             Ok(resp) => println!("{}", resp),
-            Err(err) => println!(
+            Err(err) => eprintln!(
                 "Failed to inspect service '{}': {}",
-                service.name(),
+                service_name,
                 err.to_string()
             ),
         }
     } else {
-        println!(
+        eprintln!(
             "Unknown command '{}'. Type 'help' to get list of commands",
             words[0]
         )
@@ -173,13 +153,16 @@ async fn main() -> Result<()> {
         .filter_level(args.log_level)
         .init();
 
-    let mut bus = Bus::register(CONNECT_SERVICE_NAME)
-        .await
-        .expect("Failed to register connect service");
+    let mut bus = Service::new(
+        CONNECT_SERVICE_NAME,
+        &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
+    )
+    .await
+    .expect("Failed to register connect service");
 
     debug!("Succesfully registered");
 
-    let mut peer = bus
+    let mut target_service = bus
         .connect_await(&args.target_service)
         .await
         .expect("Failed to connect to the target service");
@@ -188,17 +171,17 @@ async fn main() -> Result<()> {
     print_help();
 
     let config = Config::builder().color_mode(ColorMode::Enabled).build();
-    let mut rl = Editor::<()>::with_config(config)?;
+    let mut rl = DefaultEditor::with_config(config)?;
 
     loop {
         let readline = rl.readline(&format!("{}", ">> ".bright_green()));
         match readline {
             Ok(line) => {
-                if handle_input_line(&mut peer, &line).await {
+                if handle_input_line(&mut target_service, &line, &args.target_service).await {
                     return Ok(());
                 }
 
-                rl.add_history_entry(line.as_str());
+                rl.add_history_entry(line.as_str()).unwrap();
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");

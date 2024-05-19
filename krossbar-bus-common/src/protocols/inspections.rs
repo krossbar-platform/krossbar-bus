@@ -7,19 +7,9 @@ pub const INSPECT_METHOD: &str = "inspect";
 
 #[derive(Serialize, Deserialize)]
 pub struct InspectData {
-    methods: Vec<String>,
-    signals: Vec<String>,
-    states: Vec<String>,
-}
-
-impl InspectData {
-    pub fn new(methods: Vec<String>, signals: Vec<String>, states: Vec<String>) -> Self {
-        Self {
-            methods,
-            signals,
-            states,
-        }
-    }
+    pub methods: Vec<String>,
+    pub signals: Vec<String>,
+    pub states: Vec<String>,
 }
 
 impl Display for InspectData {

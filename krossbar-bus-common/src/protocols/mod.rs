@@ -1,3 +1,3 @@
-pub mod connect;
+pub mod inspections;
 pub mod hub;
 pub mod monitor;
