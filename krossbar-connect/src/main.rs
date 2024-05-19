@@ -1,3 +1,35 @@
+//! ## Krossbar bus connect
+//!
+//! Krossbar connect allows connecting to Krossbar services to inspect endpoints or make calls.
+//!
+//! **Note**: To be able to use connect, you need corresponding features, which are enabled by default:
+//! - `privileged-services` hub feature, which allows using Krossbar tools;
+//! - `inspection` Krossbar bus library feature, which adds `inspect` service endpoint.
+//!
+//! ## Usage
+//! Running the binary allows you to connect to a service. If succefully connected, the tool enters
+//! interactive mode and provides a set of commands for usage:
+//! - `help` to print commands help
+//! - `inspect` to inspect target service endpoint;
+//! - `call {method_name} {args_json}` to call a method. Args should be a valid JSON and deserialize into the method params type.
+//! - `subscribe {signal_name}` to subscribe to a signal or a state. This spawns an async task, so you can continue working with the service. All incoming signal emmitions will output into stdout.
+//! - `q` to quit the tool.
+//!
+//! ```bash
+//! Krossbar bus connect tool
+//!
+//! Usage: krossbar-connect [OPTIONS] <TARGET_SERVICE>
+//!
+//! Arguments:
+//!   <TARGET_SERVICE>  Service to connect to
+//!
+//! Options:
+//!   -l, --log-level <LOG_LEVEL>  Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE [default: WARN]
+//!   -h, --help                   Print help
+//!   -V, --version                Print version
+//! ```
+//!
+
 use std::{path::PathBuf, str::FromStr};
 
 use clap::{self, Parser};
@@ -8,7 +40,7 @@ use rustyline::{error::ReadlineError, ColorMode, Config, DefaultEditor, Result};
 use serde_json::Value;
 
 use krossbar_bus_common::{
-    protocols::connect::{InspectData, INSPECT_METHOD},
+    protocols::inspections::{InspectData, INSPECT_METHOD},
     CONNECT_SERVICE_NAME, DEFAULT_HUB_SOCKET_PATH,
 };
 use krossbar_bus_lib::{Client, Service};
@@ -36,7 +68,7 @@ fn print_help() {
         "call".bright_yellow()
     );
     println!(
-        "\t\twhich deserializes into the method argument type (use tracing logs and `bus-monitor`"
+        "\t\twhich deserializes into the method argument type (use tracing logs and `krossbar-monitor`"
     );
     println!("\t\tto find how method parameters serialize)");
 
@@ -58,7 +90,7 @@ fn format_response(endpoint_type: &str, endpoint_name: &str, json: &Value) {
 }
 
 async fn handle_input_line(client: &mut Client, line: &String, service_name: &str) -> bool {
-    let words: Vec<&str> = line.split(' ').collect();
+    let words: Vec<String> = line.split(' ').map(|s| s.to_owned()).collect();
 
     if words.len() == 0 {
         eprintln!("Empty input. Type 'help' to get list of commands");
@@ -75,7 +107,7 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
             return false;
         }
 
-        let json = match Value::from_str(words[2]) {
+        let json = match Value::from_str(&words[2]) {
             Ok(value) => value,
             Err(err) => {
                 eprintln!(
@@ -86,8 +118,8 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
             }
         };
 
-        match client.call(words[1], &json).await {
-            Ok(response) => format_response("Method", words[1], &response),
+        match client.call(&words[1], &json).await {
+            Ok(response) => format_response("Method", &words[1], &response),
             Err(err) => {
                 eprintln!("Failed to make a call: {}", err.to_string())
             }
@@ -98,23 +130,25 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
             return false;
         }
 
-        let signal_name: String = words[1].into();
-        match client.subscribe::<Value>(words[1]).await {
+        let signal_name = words[1].clone();
+        match client.subscribe::<Value>(&words[1]).await {
             Ok(mut stream) => {
-                while let Some(value_result) = stream.next().await {
-                    match value_result {
-                        Ok(json) => format_response("Signal", &signal_name, &json),
-                        Err(err) => {
-                            eprintln!(
-                                "Error subscribing to a signal '{}': {}",
-                                words[1],
-                                err.to_string()
-                            );
+                tokio::spawn(async move {
+                    while let Some(value_result) = stream.next().await {
+                        match value_result {
+                            Ok(json) => format_response("Signal", &signal_name, &json),
+                            Err(err) => {
+                                eprintln!(
+                                    "Error subscribing to a signal '{}': {}",
+                                    words[1],
+                                    err.to_string()
+                                );
 
-                            return false;
+                                return;
+                            }
                         }
                     }
-                }
+                });
             }
             Err(err) => {
                 eprintln!(
@@ -143,7 +177,7 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
     return false;
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     debug!("Starting Krossbar bus connect");
 

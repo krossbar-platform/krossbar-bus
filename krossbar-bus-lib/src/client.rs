@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use crate::signal::AsyncSignal;
 use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter};
 
-pub type Stream<T> = Pin<Box<dyn FusedStream<Item = crate::Result<T>>>>;
+pub type Stream<T> = Pin<Box<dyn FusedStream<Item = crate::Result<T>> + Send>>;
 
 /// Service connection handle
 #[derive(Clone)]

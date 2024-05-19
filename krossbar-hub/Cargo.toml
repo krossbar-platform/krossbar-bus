@@ -1,6 +1,6 @@
 [package]
 name = "krossbar-hub"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
@@ -44,4 +44,4 @@ tempdir = "0.3"
 tokio = { version = "1.37", features = ["full"] }
 tokio-util = "0.7"
 
-krossbar-bus-lib = { path = "../krossbar-bus-lib" }
+krossbar-bus-lib = "0.5.1"
