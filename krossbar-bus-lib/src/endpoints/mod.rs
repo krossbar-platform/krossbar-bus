@@ -2,12 +2,11 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use bson::Bson;
 use futures::{future, lock::Mutex, Future};
-use krossbar_bus_common::protocols::connect::INSPECT_METHOD;
 use log::{debug, warn};
 use serde::{de::DeserializeOwned, Serialize};
 
 #[cfg(feature = "inspection")]
-use krossbar_bus_common::protocols::connect::InspectData;
+use krossbar_bus_common::protocols::inspections::{InspectData, INSPECT_METHOD};
 use krossbar_common_rpc::request::{Body, RpcRequest};
 
 pub mod signal;
@@ -48,11 +47,11 @@ impl Endpoints {
             Body::Call(params) => {
                 #[cfg(feature = "inspection")]
                 if request.endpoint() == INSPECT_METHOD {
-                    let data = InspectData::new(
-                        self.methods.keys().cloned().collect(),
-                        self.signals.keys().cloned().collect(),
-                        self.states.keys().cloned().collect(),
-                    );
+                    let data = InspectData {
+                        methods: self.methods.keys().cloned().collect(),
+                        signals: self.signals.keys().cloned().collect(),
+                        states: self.states.keys().cloned().collect(),
+                    };
 
                     request.respond(Ok(data)).await;
                     return;

@@ -72,7 +72,8 @@ impl Client {
         }
     }
 
-    /// Get a remote state value. Equals to `call::<R, ()>(endpoint, &())`
+    /// Get a remote state value. Equals to `call::<R, ()>(endpoint, &())`, which means
+    /// you can use it for any method with unit params type.
     pub async fn get<R: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<R> {
         self.call(endpoint, &()).await
     }
