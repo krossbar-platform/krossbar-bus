@@ -18,29 +18,29 @@ A library to register and connect Krossbar services
 Krossbar services utilize UDS to communicate with each other.
 Krossbar hub acts as a point of rendezvous for the services, checking permissions and connecting counterparties.
 
+The library uses [krossbar_common_rpc::rpc::Rpc](https://docs.rs/krossbar-common-rpc/latest/krossbar_common_rpc/rpc/struct.Rpc.html) connections to comunicate.
 
-To register a service call [Service::new]. This makes a call to the hub trying to register a service with a given name.
+To register a service call [Service::new](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.new). This makes a call to the hub trying to register a service with a given name.
 
-[Service] exposes two subsets of methods: to act as a message source, or a message consumer:
+[Service](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html) exposes two subsets of methods: to act as a message source, or a message consumer:
 
 #### Service
 To act as a message source you have a bunch of method to register service endpoints:
-- [Service::register_method] to register a method, which can be called by an arbitrary service. Can be used as a one-way message receiver (see [Client::message]);
-- [Service::register_signal] to register a signal, to which peers are able to subscribe. Calling [Signal::emit] will broadcast a value to the signal subscribers;
-- [Service::register_state] to register a state, which holds a value and can be can be subscribed to, or called to retrieve the value. Calling [State::set] will broadcast a value to the state subscribers.
+- [Service::register_method](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.register_method) to register a method, which can be called by an arbitrary service. Can be used as a one-way message receiver (see [Client::message](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/client/struct.Client.html#method.message));
+- [Service::register_signal](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.register_signal) to register a signal, to which peers are able to subscribe. Calling [Signal::emit] will broadcast a value to the signal subscribers;
+- [Service::register_state](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.register_state) to register a state, which holds a value and can be can be subscribed to, or called to retrieve the value. Calling [State::set] will broadcast a value to the state subscribers.
 
 #### Client
-To act as as message consumer, you have to connect to a client using [Service::connect]. As expected, hub needs to check if you are allowed to connect to the client, but after you've connected, there a couple of methods you can use:
-- [Client::call] to call a method or retrieve state value;
-- [Client::get] get a remote state value;
-- [Client::message] send a one-way message to a remote method;
-- [Client::subscribe] to subscribe to a signal, or state changes;
-- [Client::message] to send-one-way message.
+To act as as message consumer, you have to connect to a client using [Service::connect](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.connect). As expected, hub needs to check if you are allowed to connect to the client, but after you've connected, there a couple of methods you can use:
+- [Client::call](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/client/struct.Client.html#method.call) to call a method or retrieve state value;
+- [Client::get](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/client/struct.Client.html#method.get) get a remote state value;
+- [Client::subscribe](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/client/struct.Client.html#method.subscribe) to subscribe to a signal, or state changes;
+- [Client::message](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/client/struct.Client.html#method.message) to send-one-way message.
 
 #### Polling
-In order to receive incoming connection and messages you need to poll the [Service]. There are two methods to do this:
+In order to receive incoming connection and messages you need to poll the [Service](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html). There are two methods to do this:
 
-1. Using [Service::run] if you don't need a service handle anymore. This is much more convenient way. You can spawn a task to just poll the service in a loop:
+1. Using [Service::run](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.run) if you don't need a service handle anymore. This is much more convenient way. You can spawn a task to just poll the service in a loop:
 
     ```rust
 
@@ -67,7 +67,7 @@ In order to receive incoming connection and messages you need to poll the [Servi
     }
     ```
 
-2. Using [Service::poll] if you still need a service handle to make new connections, or register new endpoints.
+2. Using [Service::poll](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.poll) if you still need a service handle to make new connections, or register new endpoints.
     You can use future combinators to poll both: service handle and endpoint handles.
 
     ```rust

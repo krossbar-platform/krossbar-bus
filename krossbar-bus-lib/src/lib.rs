@@ -5,6 +5,7 @@
 //! Krossbar services utilize UDS to communicate with each other.
 //! Krossbar hub acts as a point of rendezvous for the services, checking permissions and connecting counterparties.
 //!
+//! The library uses [krossbar_common_rpc::rpc::Rpc] connections to comunicate.
 //!
 //! To register a service call [Service::new]. This makes a call to the hub trying to register a service with a given name.
 //!
@@ -20,7 +21,6 @@
 //! To act as as message consumer, you have to connect to a client using [Service::connect]. As expected, hub needs to check if you are allowed to connect to the client, but after you've connected, there a couple of methods you can use:
 //! - [Client::call] to call a method or retrieve state value;
 //! - [Client::get] get a remote state value;
-//! - [Client::message] send a one-way message to a remote method;
 //! - [Client::subscribe] to subscribe to a signal, or state changes;
 //! - [Client::message] to send-one-way message.
 //!

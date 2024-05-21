@@ -9,7 +9,7 @@
 [actions-badge]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/ci.yml/badge.svg
 [actions-url]: https://github.com/krossbar-platform/krossbar-bus/actions/workflows/ci.yml
 
-# krossbar-bus-hub
+# krossbar-hub
 
 ### Krossbar bus hub
 
