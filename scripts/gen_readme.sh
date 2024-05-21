@@ -59,11 +59,11 @@ replace_symbols_with_doc_links() {
 
     for SYMBOL in ${SYMBOLS}
     do
+        # Get a URL for a symbol from the local docs
         local URL=$(echo "${DOCS_HTML}" | sed -rn "s/.*<a href=\"(\S+)\".*>${SYMBOL}<\/a>.*/\1/p" | head -1)
         local ABSOLUTE_LINK=$(expand_link "${URL}" "$2")
 
-        echo "Symb ${SYMBOL} Url ${ABSOLUTE_LINK}"
-
+        # Replace symbol link woth rear docs links
         sed -ri "s|\[${SYMBOL}\]|[${SYMBOL}](${ABSOLUTE_LINK})|g" "${WORKING_DIR}/README.md"
     done
 }

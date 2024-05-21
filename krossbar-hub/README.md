@@ -17,8 +17,8 @@ The binary acts as a hub for service connections. On request it makes a UDS pair
 to each of the peers, which afterward use the pair for communication.
 The only known point of rendezvous fot the services is the hub socket.
 
-The hub uses [krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH] for hub socket path and
-[krossbar_bus_common::DEFAULT_SERVICE_FILES_DIR] for service files dir by default.
+The hub uses [krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH](https://docs.rs/krossbar-bus-common/latest/krossbar_bus_common/constant.DEFAULT_HUB_SOCKET_PATH.html) for hub socket path and
+[krossbar_bus_common::DEFAULT_SERVICE_FILES_DIR](https://docs.rs/krossbar-bus-common/latest/krossbar_bus_common/constant.DEFAULT_SERVICE_FILES_DIR.html) for service files dir by default.
 These can be changed using cmd args.
 
 Created socket has 0o666 file permission to allow service connections.
@@ -44,7 +44,7 @@ See [lib examples](https://github.com/krossbar-platform/krossbar-bus/tree/main/k
 Build manually or use `cargo install krossbar-bus-hub` to install.
 
 Usage:
-```sh
+```bash
 Krossbar bus hub
 
 Usage: krossbar-bus-hub [OPTIONS]
