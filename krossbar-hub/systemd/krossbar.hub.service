@@ -5,6 +5,8 @@ Description=Krossbar platform bus hub
 ExecStart=/usr/bin/krossbar-bus-hub
 StandardOutput=journal
 Restart=always
+StartLimitIntervalSec=10
+StartLimitBurst=3
 
 [Install]
 WantedBy=multi-user.target

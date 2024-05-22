@@ -14,7 +14,7 @@ pub struct Args {
     pub log_level: log::LevelFilter,
 
     /// Additional service files directories
-    #[clap(short, long, default_value = "[]")]
+    #[clap(short, long)]
     pub additional_service_dirs: Vec<PathBuf>,
 
     /// Hub socket path

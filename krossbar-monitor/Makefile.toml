@@ -10,17 +10,31 @@ args = ["clean"]
 [tasks.build]
 command = "cargo"
 args = ["build"]
-dependencies = ["clean"]
+
+[tasks.build-release]
+command = "cargo"
+args = ["build", "--release"]
 
 [tasks.test]
 command = "cargo"
 args = ["test"]
-dependencies = ["clean"]
 
 [tasks.new-build]
-dependencies = ["format", "build", "test"]
+dependencies = ["clean", "build"]
 
 [tasks.readme]
 workspace = false
 command = "../scripts/gen_readme.sh"
 args = ["."]
+
+[tasks.install]
+workspace = false
+command = "../scripts/install.sh"
+args = ["-b", "krossbar-monitor", "-s", "krossbar.monitor.service"]
+dependencies = ["build"]
+
+[tasks.install-release]
+workspace = false
+command = "../scripts/install.sh"
+args = ["--release", "-b", "krossbar-monitor", "-s", "krossbar.monitor.service"]
+dependencies = ["build-release"]

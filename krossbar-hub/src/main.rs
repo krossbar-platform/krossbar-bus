@@ -61,19 +61,22 @@ use log::*;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    debug!("Starting Krossbar hub");
-
     let args = args::Args::parse();
 
     pretty_env_logger::formatted_builder()
         .filter_level(args.log_level)
         .init();
 
+    info!("Starting Krossbar hub");
+
     for dir in args.additional_service_dirs.iter() {
         if !Path::new(&dir).exists() {
+            error!("Failed to find additional servis directory at {dir:?}");
             return;
         }
     }
 
     hub::Hub::new(args).run().await;
+
+    info!("Starting Krossbar exited");
 }
