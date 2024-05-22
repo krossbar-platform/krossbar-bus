@@ -118,6 +118,7 @@ impl Hub {
     }
 
     /// Make a connection form a stream
+    /// Note: In case of an error use [RpcWriter::flush] to send response before dropping client connection
     async fn make_new_connection(
         mut rpc: Rpc,
         credentials: UCred,
@@ -159,6 +160,8 @@ impl Hub {
                                     Err(e) => {
                                         warn!("Service {service_name} is not allowed to register");
                                         request.respond::<()>(Err(e)).await;
+                                        request.writer().flush().await;
+
                                         return None;
                                     }
                                 }
@@ -172,6 +175,8 @@ impl Hub {
                                         "Invalid register message body: {m:?}"
                                     ))))
                                     .await;
+                                request.writer().flush().await;
+
                                 return None;
                             }
                             // Message deserialization error
@@ -181,6 +186,8 @@ impl Hub {
                                 request
                                     .respond::<()>(Err(Error::InternalError(e.to_string())))
                                     .await;
+                                request.writer().flush().await;
+
                                 return None;
                             }
                         }
@@ -188,6 +195,13 @@ impl Hub {
                     // Not a call, but respond, of FD or other irrelevant message
                     _ => {
                         warn!("Invalid Auth message from a client (not a call)");
+                        request
+                            .respond::<()>(Err(Error::InternalError(
+                                "Waiting for a registration message. Received a call".to_owned(),
+                            )))
+                            .await;
+                        request.writer().flush().await;
+
                         return None;
                     }
                 }

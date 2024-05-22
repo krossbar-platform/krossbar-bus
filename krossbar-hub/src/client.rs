@@ -1,5 +1,3 @@
-use std::os::fd::AsRawFd;
-
 use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 use log::{info, warn};
 use tokio::net::UnixStream;
@@ -111,8 +109,6 @@ impl Client {
     ) {
         match UnixStream::pair() {
             Ok((socket1, socket2)) => {
-                let (fd1, fd2) = (socket1.as_raw_fd(), socket2.as_raw_fd());
-
                 if let Err(e) = target_writer
                     .connection_request(initiator, target_service, socket1)
                     .await
@@ -128,9 +124,6 @@ impl Client {
                 } else {
                     request.respond_with_fd(Ok(()), socket2).await;
                 }
-
-                let _ = nix::unistd::close(fd1);
-                let _ = nix::unistd::close(fd2);
 
                 info!("Succefully sent connection request from {initiator} to {target_service}");
             }
