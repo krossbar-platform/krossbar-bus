@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use log::{LevelFilter, *};
 use tokio;
@@ -13,7 +13,7 @@ async fn main() {
         .init();
 
     let mut service = Service::new(
-        "com.examples.watch_state",
+        "com.examples.call_state",
         &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
     )
     .await
@@ -24,12 +24,20 @@ async fn main() {
         .await
         .unwrap();
 
-    let call_result: String = peer_connection.call("state", &42).await.unwrap();
+    tokio::spawn(service.run());
+
+    let call_result = peer_connection.get::<i32>("state").await.unwrap();
     debug!("State call result: {}", call_result);
 
-    let call_result: String = peer_connection.call("state", &11).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let call_result = peer_connection.get::<i32>("state").await.unwrap();
     debug!("State call result: {}", call_result);
 
-    let call_result: String = peer_connection.call("state", &69).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let call_result = peer_connection.get::<i32>("state").await.unwrap();
     debug!("State call result: {}", call_result);
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
 }

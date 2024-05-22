@@ -1,3 +1,3 @@
 {
-    "exec": "/data/krossbar/*"
+    "exec": "/usr/local/bin/watch_state"
 }

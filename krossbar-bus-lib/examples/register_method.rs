@@ -26,5 +26,7 @@ async fn main() {
         })
         .unwrap();
 
+    tokio::spawn(service.run());
+
     let _ = tokio::signal::ctrl_c().await;
 }

@@ -31,7 +31,8 @@ async fn main() {
         select! {
             value = subscription.next() => {
                 debug!("Signal value: {value:?}");
-            }
+            },
+            _ = service.poll() => {}
             _ = tokio::signal::ctrl_c() => {
                 break;
             }

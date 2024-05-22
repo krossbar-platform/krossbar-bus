@@ -24,6 +24,8 @@ async fn main() {
         .await
         .unwrap();
 
+    tokio::spawn(service.run());
+
     let call_result: String = peer_connection.call("method", &42).await.unwrap();
     debug!("Method call result: {}", call_result);
 

@@ -21,6 +21,8 @@ async fn main() {
 
     let signal = service.register_signal::<i64>("signal").unwrap();
 
+    tokio::spawn(service.run());
+
     let mut increment = 0;
     loop {
         tokio::select! {

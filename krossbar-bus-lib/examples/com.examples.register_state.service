@@ -1,4 +1,4 @@
 {
-    "exec": "/data/krossbar/*",
+    "exec": "/usr/local/bin/register_state",
     "incoming_connections": ["**"]
 }

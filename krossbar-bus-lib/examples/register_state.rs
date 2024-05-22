@@ -21,6 +21,8 @@ async fn main() {
 
     let mut state = service.register_state("state", 42).unwrap();
 
+    tokio::spawn(service.run());
+
     let states = vec![11, 42, 69];
     let mut iter = states.into_iter().cycle();
     loop {
