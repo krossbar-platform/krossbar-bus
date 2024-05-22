@@ -132,6 +132,19 @@ impl Permissions {
         }
     }
 
+    /// Check if we have service file for the service
+    pub fn check_service_exists(&self, target_service: &str) -> bool {
+        for dir in &self.service_files_dirs {
+            let service_file_name = dir.join(format!("{}.service", target_service));
+
+            if service_file_name.exists() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check if a **client_service** is allowed to connect to a **target_service**
     pub fn check_connection_allowed(&self, client_service: &str, target_service: &str) -> bool {
         trace!(

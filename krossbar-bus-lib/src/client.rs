@@ -241,7 +241,7 @@ impl ClientHandle {
                 .await
             {
                 Ok(future) => match future.await {
-                    Ok((_, stream)) => return Ok(Rpc::new(stream, "hub")),
+                    Ok((_, stream)) => return Ok(Rpc::new(stream, service_name)),
                     Err(e) => {
                         error!("Hub error during peer connection: {e:?}");
                         return Err(e);

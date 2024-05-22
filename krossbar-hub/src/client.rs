@@ -1,3 +1,5 @@
+use std::os::fd::AsRawFd;
+
 use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 use log::{info, warn};
 use tokio::net::UnixStream;
@@ -109,6 +111,8 @@ impl Client {
     ) {
         match UnixStream::pair() {
             Ok((socket1, socket2)) => {
+                let (fd1, fd2) = (socket1.as_raw_fd(), socket2.as_raw_fd());
+
                 if let Err(e) = target_writer
                     .connection_request(initiator, target_service, socket1)
                     .await
@@ -124,6 +128,9 @@ impl Client {
                 } else {
                     request.respond_with_fd(Ok(()), socket2).await;
                 }
+
+                let _ = nix::unistd::close(fd1);
+                let _ = nix::unistd::close(fd2);
 
                 info!("Succefully sent connection request from {initiator} to {target_service}");
             }
@@ -172,13 +179,26 @@ impl Client {
                 if !add_pending {
                     request.respond::<()>(Err(Error::ServiceNotFound)).await;
                 } else {
-                    info!("Requested client is down. Adding pending connection");
+                    if !context_lock
+                        .permissions
+                        .check_service_exists(target_service)
+                    {
+                        warn!(
+                            "Failed to find a service which client wants to wait: {target_service}"
+                        );
 
-                    context_lock
-                        .pending_connections
-                        .entry(target_service.to_owned())
-                        .or_default()
-                        .push((service_name.to_owned(), request));
+                        request.respond::<()>(Err(Error::ServiceNotFound)).await;
+                    } else {
+                        info!(
+                            "Requested service {target_service} is down. Adding pending connection"
+                        );
+
+                        context_lock
+                            .pending_connections
+                            .entry(target_service.to_owned())
+                            .or_default()
+                            .push((service_name.to_owned(), request));
+                    }
                 }
             }
         }

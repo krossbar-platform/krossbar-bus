@@ -117,6 +117,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!("Succesfully connected to the peer. Listening");
 
+    tokio::spawn(service.run());
+
     let _ = tokio::signal::ctrl_c().await;
     debug!("Shutting monitor down");
 

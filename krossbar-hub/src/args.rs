@@ -10,7 +10,7 @@ use krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH;
 /// Krossbar bus hub
 pub struct Args {
     /// Log level: OFF, ERROR, WARN, INFO, DEBUG, TRACE
-    #[clap(short, long, default_value_t = LevelFilter::Trace)]
+    #[clap(short, long, default_value_t = LevelFilter::Debug)]
     pub log_level: log::LevelFilter,
 
     /// Additional service files directories
