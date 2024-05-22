@@ -177,7 +177,7 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
     return false;
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main()]
 async fn main() -> Result<()> {
     debug!("Starting Krossbar bus connect");
 
@@ -187,7 +187,7 @@ async fn main() -> Result<()> {
         .filter_level(args.log_level)
         .init();
 
-    let mut bus = Service::new(
+    let mut service = Service::new(
         CONNECT_SERVICE_NAME,
         &PathBuf::from(DEFAULT_HUB_SOCKET_PATH),
     )
@@ -196,7 +196,7 @@ async fn main() -> Result<()> {
 
     debug!("Succesfully registered");
 
-    let mut target_service = bus
+    let mut target_service = service
         .connect_await(&args.target_service)
         .await
         .expect("Failed to connect to the target service");
@@ -204,11 +204,14 @@ async fn main() -> Result<()> {
     debug!("Succesfully connected to the service");
     print_help();
 
+    tokio::spawn(service.run());
+
     let config = Config::builder().color_mode(ColorMode::Enabled).build();
     let mut rl = DefaultEditor::with_config(config)?;
 
     loop {
         let readline = rl.readline(&format!("{}", ">> ".bright_green()));
+
         match readline {
             Ok(line) => {
                 if handle_input_line(&mut target_service, &line, &args.target_service).await {
