@@ -1,8 +1,8 @@
 [Unit]
-Description=Krossbar platform bus hub
+Description=Krossbar platform hub
 
 [Service]
-ExecStart=/usr/bin/krossbar-bus-hub
+ExecStart=/usr/local/bin/krossbar-hub
 StandardOutput=journal
 Restart=always
 StartLimitIntervalSec=10

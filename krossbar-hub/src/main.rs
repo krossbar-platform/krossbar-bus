@@ -71,7 +71,7 @@ async fn main() {
 
     for dir in args.additional_service_dirs.iter() {
         if !Path::new(&dir).exists() {
-            error!("Failed to find additional servis directory at {dir:?}");
+            error!("Failed to find additional service directory at {dir:?}");
             return;
         }
     }

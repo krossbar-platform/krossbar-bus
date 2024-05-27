@@ -30,11 +30,11 @@ args = ["."]
 [tasks.install]
 workspace = false
 command = "../scripts/install.sh"
-args = ["-b", "krossbar-hub", "-d", "systemd/krossbar.hub.service"]
+args = ["-b", "krossbar-hub", "-d", "systemd/krossbar-hub.service"]
 dependencies = ["build"]
 
 [tasks.install-release]
 workspace = false
 command = "../scripts/install.sh"
-args = ["--release", "-b", "krossbar-hub", "-d", "systemd/krossbar.hub.service"]
+args = ["--release", "-b", "krossbar-hub", "-d", "systemd/krossbar-hub.service"]
 dependencies = ["build-release"]

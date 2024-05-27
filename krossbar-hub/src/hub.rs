@@ -115,6 +115,9 @@ impl Hub {
             }
         }
         .await;
+
+        // Cleanup socket
+        let _ = std::fs::remove_file(&self.socket_path);
     }
 
     /// Make a connection form a stream

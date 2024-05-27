@@ -15,6 +15,14 @@ args = ["build"]
 command = "cargo"
 args = ["build", "--release"]
 
+[tasks.build-examples]
+command = "cargo"
+args = ["build", "--examples"]
+
+[tasks.build-examples-release]
+command = "cargo"
+args = ["build", "--examples", "--release"]
+
 [tasks.test]
 command = "cargo"
 args = ["test"]
@@ -26,3 +34,12 @@ dependencies = ["clean", "build"]
 workspace = false
 command = "../scripts/gen_readme.sh"
 args = ["."]
+
+[tasks.install-examples]
+dependencies = ["build-examples"]
+command = "scripts/install-examples.sh"
+
+[tasks.install-examples-release]
+dependencies = ["build-examples-release"]
+command = "scripts/install-examples.sh"
+args = ["release"]
