@@ -158,6 +158,7 @@ impl ClientHandle {
         wait_connect: bool,
     ) -> crate::Result<Self> {
         let service_name = service_name.to_owned();
+
         let rpc = Self::hub_connect(
             &hub_connection,
             &hub_reconnect_signal,
@@ -165,6 +166,7 @@ impl ClientHandle {
             wait_connect,
         )
         .await?;
+
         Ok(Self {
             service_name,
             rpc,

@@ -106,7 +106,7 @@ impl Service {
                 Ok(handle) => handle,
                 Err(e) => return Err(e)
             },
-            _ = self.poll().fuse() => { panic!("Unexpected self poll return");}
+            _ = self.poll().fuse() => { panic!("Unexpected connection return");}
         };
 
         // One handle for a client
@@ -296,8 +296,8 @@ impl Service {
                             }
                         }
                         // Need to run `poll` here to receive response
-                        _ = rpc.poll().fuse() => {
-                            return Err(crate::Error::InternalError("Hub connection early return".to_owned()));
+                        request = rpc.poll().fuse() => {
+                            return Err(crate::Error::InternalError(format!("Unexpected hub message during connection request: {request:?}")));
                         },
                     }
                 }

@@ -5,7 +5,7 @@ Description=Krossbar platform hub
 ExecStart=/usr/local/bin/krossbar-hub
 StandardOutput=journal
 Restart=always
-StartLimitIntervalSec=10
+StartLimitInterval=10s
 StartLimitBurst=3
 
 [Install]

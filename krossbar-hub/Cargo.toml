@@ -36,7 +36,7 @@ tokio = { version = "1.37", features = ["net", "signal", "rt", "macros"] }
 thiserror = "1.0"
 
 krossbar-bus-common = "0.5.0"
-krossbar-common-rpc = "0.5.2"
+krossbar-common-rpc = "0.5.3"
 
 [dev-dependencies]
 rstest = "0.19"

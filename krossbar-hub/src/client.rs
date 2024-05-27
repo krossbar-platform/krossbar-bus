@@ -4,7 +4,7 @@ use tokio::net::UnixStream;
 
 use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
 
-use crate::hub::{ContextType, HubContext};
+use crate::hub::ContextType;
 
 pub struct Client {
     context: ContextType,
@@ -89,11 +89,13 @@ impl Client {
     pub async fn resolve_pending_connections(
         service_name: &str,
         stream: &mut RpcWriter,
-        context: &mut HubContext,
+        context: &ContextType,
     ) {
-        if let Some(waiters) = context.pending_connections.remove(service_name) {
+        let mut context_lock = context.lock().await;
+
+        if let Some(waiters) = context_lock.pending_connections.remove(service_name) {
             for (initiator, request) in waiters.into_iter() {
-                info!("Found service {initiator} which waits for a connected service {service_name}. Resolving now");
+                info!("Found pending connection from {initiator} to {service_name}. Resolving now");
 
                 // Send sockets
                 Self::send_connection_descriptors(&initiator, request, service_name, stream).await

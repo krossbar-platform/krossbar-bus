@@ -158,6 +158,14 @@ impl Hub {
                                         info!("Succesfully authorized {service_name}");
                                         request.respond(Ok(())).await;
 
+                                        let mut writer = request.writer().clone();
+                                        Client::resolve_pending_connections(
+                                            &service_name,
+                                            &mut writer,
+                                            &context,
+                                        )
+                                        .await;
+
                                         service_name
                                     }
                                     Err(e) => {
@@ -249,12 +257,9 @@ impl Hub {
                 return Err(Error::NotAllowed);
             }
 
-            let mut writer = request.writer().clone();
-            Client::resolve_pending_connections(service_name, &mut writer, &mut context_lock).await;
-
             context_lock
                 .client_registry
-                .insert(service_name.to_owned(), writer);
+                .insert(service_name.to_owned(), request.writer().clone());
 
             info!("Client authorized as: {}", service_name);
 
