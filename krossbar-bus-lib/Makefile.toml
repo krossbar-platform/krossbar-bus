@@ -25,7 +25,7 @@ args = ["build", "--examples", "--release"]
 
 [tasks.test]
 command = "cargo"
-args = ["test"]
+args = ["nextest", "run"]
 
 [tasks.new-build]
 dependencies = ["clean", "build"]
