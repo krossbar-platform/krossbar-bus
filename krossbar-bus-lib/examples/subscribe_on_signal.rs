@@ -7,10 +7,10 @@ use tokio::{self, select};
 use krossbar_bus_common::DEFAULT_HUB_SOCKET_PATH;
 use krossbar_bus_lib::service::Service;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     pretty_env_logger::formatted_builder()
-        .filter_level(LevelFilter::Debug)
+        .filter_level(LevelFilter::Trace)
         .init();
 
     let mut service = Service::new(

@@ -99,9 +99,14 @@ impl Client {
     /// Tries to deserialize the response into `R`. Returns [None] if failes and stops handling the subscription.
     pub async fn subscribe<R: DeserializeOwned>(&self, endpoint: &str) -> crate::Result<Stream<R>> {
         match self.writer.subscribe(endpoint).await {
-            Ok(data) => Ok(data),
+            Ok(stream) => Ok(stream),
             // Client disconnected. Wait for main loop to reconnect
-            Err(_) => {
+            Err(e) => {
+                warn!(
+                    "Subscription failed as client disconnected: {}. Waiting to reconnect",
+                    e.to_string()
+                );
+
                 if let Err(e) = self.reconnect_signal.wait().await {
                     Err(e)
                 } else {

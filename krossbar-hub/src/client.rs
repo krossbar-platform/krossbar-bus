@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 use log::{info, warn};
 use tokio::net::UnixStream;
@@ -91,6 +93,11 @@ impl Client {
         stream: &mut RpcWriter,
         context: &ContextType,
     ) {
+        // We need this to write previously sent connection response.
+        // If we send peer connection requests rigth now, newly connected client won't have
+        // time to handle conenction response and init service data.
+        tokio::time::sleep(Duration::from_micros(1)).await;
+
         let mut context_lock = context.lock().await;
 
         if let Some(waiters) = context_lock.pending_connections.remove(service_name) {
