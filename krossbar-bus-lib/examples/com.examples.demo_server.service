@@ -1,0 +1,4 @@
+{
+    "exec": "*",
+    "incoming_connections": ["**"]
+}
