@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, sync::Arc};
 
-use futures::{lock::Mutex, stream, StreamExt};
+use futures::{lock::Mutex, stream, Future, StreamExt};
 use log::debug;
 use serde::Serialize;
 
@@ -22,6 +22,7 @@ impl Handle {
     }
 }
 
+#[derive(Clone)]
 pub struct Signal<T: Serialize> {
     clients: Arc<Mutex<Vec<(i64, RpcWriter)>>>,
     _marker: PhantomData<T>,
@@ -35,33 +36,39 @@ impl<T: Serialize> Signal<T> {
         }
     }
 
-    /// Emit the signal. Starts broadcasting `data` to the subscribers
-    pub async fn emit(&self, data: T) -> crate::Result<()> {
+    /// Emit the signal.
+    /// Polling the result future broadcasts `data` to the subscribers.
+    /// Method doesn't capture `self` into the result future, which allows moving the future into and async block.
+    pub fn emit(&self, data: T) -> impl Future<Output = crate::Result<()>> {
         debug!("Emitting a signal");
 
-        let bson = match bson::to_bson(&data) {
-            Ok(bson) => bson,
-            Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
-        };
+        let clients = self.clients.clone();
 
-        let mut client_lock = self.clients.lock().await;
+        async move {
+            let bson = match bson::to_bson(&data) {
+                Ok(bson) => bson,
+                Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
+            };
 
-        // Send data and remove clients, who don't want it anymore
-        *client_lock = stream::iter(client_lock.drain(..))
-            .filter_map(|(sub_id, client)| {
-                let data_copy = bson.clone();
-                async move {
-                    if client.respond(sub_id, Ok(data_copy)).await {
-                        Some((sub_id, client))
-                    } else {
-                        None
+            let mut client_lock = clients.lock().await;
+
+            // Send data and remove clients, who don't want it anymore
+            *client_lock = stream::iter(client_lock.drain(..))
+                .filter_map(|(sub_id, client)| {
+                    let data_copy = bson.clone();
+                    async move {
+                        if client.respond(sub_id, Ok(data_copy)).await {
+                            Some((sub_id, client))
+                        } else {
+                            None
+                        }
                     }
-                }
-            })
-            .collect()
-            .await;
+                })
+                .collect()
+                .await;
 
-        Ok(())
+            Ok(())
+        }
     }
 
     pub(crate) fn handle(&self) -> Handle {

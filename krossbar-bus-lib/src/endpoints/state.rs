@@ -1,7 +1,7 @@
 use std::{ops::Deref, sync::Arc};
 
 use bson::Bson;
-use futures::{lock::Mutex, stream, StreamExt};
+use futures::{lock::Mutex, stream, Future, StreamExt};
 use log::debug;
 use serde::Serialize;
 
@@ -58,38 +58,46 @@ impl<T: Serialize> State<T> {
         })
     }
 
-    /// Set the state to `value`. Starts broadcasting `value` to the subscribers
-    pub async fn set(&mut self, value: T) -> crate::Result<()> {
-        debug!("Set a state");
+    /// Set the state to `value`.
+    /// Polling the result future broadcasts `value` to the subscribers.
+    /// Method doesn't capture `self` into the result future, which allows moving the future into and async block.
+    pub fn set(&mut self, value: T) -> impl Future<Output = crate::Result<()>> {
+        let value_bson = bson::to_bson(&value);
 
-        let bson = match bson::to_bson(&value) {
-            Ok(bson) => bson,
-            Err(e) => return Err(crate::Error::ParamsTypeError(e.to_string())),
-        };
+        debug!("Set state");
 
         self.value = value;
 
-        let mut bson_lock = self.current_value.lock().await;
-        *bson_lock = bson;
+        let clients = self.clients.clone();
+        let bson_value = self.current_value.clone();
 
-        let mut client_lock = self.clients.lock().await;
+        async move {
+            if let Err(e) = value_bson {
+                return Err(crate::Error::ParamsTypeError(e.to_string()));
+            }
 
-        // Send data and remove clients, who don't want it anymore
-        *client_lock = stream::iter(client_lock.drain(..))
-            .filter_map(|(sub_id, client)| {
-                let data_copy = bson_lock.clone();
-                async move {
-                    if client.respond(sub_id, Ok(data_copy)).await {
-                        Some((sub_id, client))
-                    } else {
-                        None
+            let mut bson_lock = bson_value.lock().await;
+            *bson_lock = value_bson.unwrap();
+
+            let mut client_lock = clients.lock().await;
+
+            // Send data and remove clients, who don't want it anymore
+            *client_lock = stream::iter(client_lock.drain(..))
+                .filter_map(|(sub_id, client)| {
+                    let data_copy = bson_lock.clone();
+                    async move {
+                        if client.respond(sub_id, Ok(data_copy)).await {
+                            Some((sub_id, client))
+                        } else {
+                            None
+                        }
                     }
-                }
-            })
-            .collect()
-            .await;
+                })
+                .collect()
+                .await;
 
-        Ok(())
+            Ok(())
+        }
     }
 
     /// Get state value
