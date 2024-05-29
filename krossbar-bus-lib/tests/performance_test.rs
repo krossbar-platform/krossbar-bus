@@ -41,7 +41,7 @@ async fn test_performance_multithread(
         .expect("Failed to register service");
 
     echo_service
-        .register_method("echo", |_, value: i32| async move { value })
+        .register_method("echo", |_, value: i32| value)
         .expect("Failed to register method");
 
     tokio::spawn(echo_service.run());
@@ -115,7 +115,7 @@ async fn test_performance_singlethread(
         .expect("Failed to register service");
 
     echo_service
-        .register_method("echo", |_, value: i32| async move { value })
+        .register_method("echo", |_, value: i32| value)
         .expect("Failed to register method");
 
     tokio::spawn(echo_service.run());

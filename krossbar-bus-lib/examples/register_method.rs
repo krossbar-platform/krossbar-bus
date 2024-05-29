@@ -19,7 +19,7 @@ async fn main() {
     .unwrap();
 
     service
-        .register_method("method", |client_name: String, val: i32| async move {
+        .register_method("method", |client_name: String, val: i32| {
             println!("Got a call from {client_name}");
 
             format!("Hello, {}", val)

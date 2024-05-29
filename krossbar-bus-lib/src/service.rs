@@ -126,12 +126,24 @@ impl Service {
     /// Register a method. First argument of the function is set to a service name of the caller.
     ///
     /// **Note**: You need to poll [Self::run] or [Self::poll] to receive client calls
-    pub fn register_method<P, R, Fr, F>(&mut self, name: &str, func: F) -> crate::Result<()>
+    pub fn register_async_method<P, R, Fr, F>(&mut self, name: &str, func: F) -> crate::Result<()>
     where
         P: DeserializeOwned + 'static + Send,
         R: Serialize,
         Fr: Future<Output = R> + Send,
         F: FnMut(String, P) -> Fr + 'static + Send,
+    {
+        self.endpoints.register_async_method(name, func)
+    }
+
+    /// Register a method. First argument of the function is set to a service name of the caller.
+    ///
+    /// **Note**: You need to poll [Self::run] or [Self::poll] to receive client calls
+    pub fn register_method<P, R, F>(&mut self, name: &str, func: F) -> crate::Result<()>
+    where
+        P: DeserializeOwned + 'static + Send,
+        R: Serialize,
+        F: FnMut(String, P) -> R + 'static + Send,
     {
         self.endpoints.register_method(name, func)
     }

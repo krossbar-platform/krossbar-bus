@@ -99,7 +99,7 @@ impl Endpoints {
         }
     }
 
-    pub fn register_method<P, R, Fr, F>(&mut self, name: &str, func: F) -> crate::Result<()>
+    pub fn register_async_method<P, R, Fr, F>(&mut self, name: &str, func: F) -> crate::Result<()>
     where
         P: DeserializeOwned + 'static + Send,
         R: Serialize,
@@ -123,6 +123,43 @@ impl Endpoints {
                 let fn_clone = function_mutex.clone();
                 Box::pin(async move {
                     let result = fn_clone.lock().await(client_name, param).await;
+
+                    match bson::to_bson(&result) {
+                        Ok(bson) => Ok(bson),
+                        Err(e) => Err(crate::Error::ResultTypeError(e.to_string())),
+                    }
+                })
+            });
+
+        self.methods
+            .insert(name.to_owned(), Box::new(internal_method));
+
+        Ok(())
+    }
+
+    pub fn register_method<P, R, F>(&mut self, name: &str, func: F) -> crate::Result<()>
+    where
+        P: DeserializeOwned + 'static + Send,
+        R: Serialize,
+        F: FnMut(String, P) -> R + 'static + Send,
+    {
+        if self.methods.contains_key(name) {
+            return Err(crate::Error::AlreadyRegistered);
+        }
+
+        let function_mutex = Arc::new(Mutex::new(func));
+        let internal_method: MethodFunctionType =
+            Box::new(move |client_name: String, param: Bson| {
+                let param = match bson::from_bson::<P>(param) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Box::pin(future::err(crate::Error::ParamsTypeError(e.to_string())))
+                    }
+                };
+
+                let fn_clone = function_mutex.clone();
+                Box::pin(async move {
+                    let result = fn_clone.lock().await(client_name, param);
 
                     match bson::to_bson(&result) {
                         Ok(bson) => Ok(bson),

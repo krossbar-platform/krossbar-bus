@@ -43,7 +43,7 @@
 //!         .expect("Failed to register service");
 //!
 //!         service
-//!             .register_method("method", |client_name, value: i32| async move {
+//!             .register_method("method", |client_name, value: i32| {
 //!                 println!("Client name: {client_name}");
 //!
 //!                return format!("Hello, {}", value);
