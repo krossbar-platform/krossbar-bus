@@ -24,11 +24,15 @@
 
 use std::path::PathBuf;
 
+use bson::Bson;
 use clap::{self, Parser};
 use colored::*;
 use krossbar_bus_common::{DEFAULT_HUB_SOCKET_PATH, MONITOR_SERVICE_NAME};
 use krossbar_bus_lib::Service;
-use krossbar_common_rpc::monitor::{Direction, MonitorMessage, MESSAGE_METHOD};
+use krossbar_common_rpc::{
+    monitor::{Direction, MonitorMessage, MESSAGE_METHOD},
+    RpcData,
+};
 use log::{LevelFilter, *};
 
 /// Krossbar bus monitor
@@ -54,7 +58,7 @@ fn short_name(name: &str, target_service: bool) -> String {
             result.push('.');
         } else {
             let last_section = if target_service {
-                format!("{}", section.bright_red())
+                format!("{}", section.red())
             } else {
                 (*section).into()
             };
@@ -66,21 +70,89 @@ fn short_name(name: &str, target_service: bool) -> String {
     result
 }
 
+// pub enum RpcData {
+//     /// One way message
+//     Message { endpoint: String, body: Bson },
+//     /// RPC call
+//     Call { endpoint: String, params: Bson },
+//     /// Subscription request
+//     Subscription { endpoint: String },
+//     /// Connection request
+//     /// `client_name` - initiator client name
+//     /// `target_name` - connection target name, which can be used
+//     ///     to implement gateways
+//     ConnectionRequest {
+//         client_name: String,
+//         target_name: String,
+//     },
+//     /// Message response
+//     Response(crate::Result<Bson>),
+//     /// Mesage response, which precedes incoming FD
+//     FdResponse(crate::Result<Bson>),
+// }
+fn format_data(data: RpcData) -> String {
+    let format_result = |value: krossbar_bus_lib::Result<Bson>| -> String {
+        match value {
+            Ok(body) => format!(
+                "{} {}",
+                "OK".green(),
+                body.into_relaxed_extjson().to_string()
+            ),
+            Err(e) => format!("{} {}", "ERR".red(), e.to_string()),
+        }
+    };
+
+    match data {
+        RpcData::Message { endpoint, body } => {
+            format!(
+                "{}({}) -> {}",
+                "Message".yellow(),
+                body.into_relaxed_extjson().to_string(),
+                endpoint.white(),
+            )
+        }
+        RpcData::Call { endpoint, params } => {
+            format!(
+                "{}({}) -> {}",
+                "Call".blue(),
+                params.into_relaxed_extjson().to_string(),
+                endpoint.white(),
+            )
+        }
+        RpcData::Subscription { endpoint } => {
+            format!("{} -> {}", "Subscription".purple(), endpoint.white(),)
+        }
+        RpcData::ConnectionRequest {
+            client_name,
+            target_name,
+        } => {
+            format!("{} {client_name} -> {target_name}", "Connection".magenta())
+        }
+        RpcData::Response(response) => {
+            format!("{} <- {}", format_result(response), "Response".red(),)
+        }
+
+        RpcData::FdResponse(response) => {
+            format!("{} <- {}", format_result(response), "FD response".red(),)
+        }
+    }
+}
+
 async fn handle_message(service_name: &str, monitor_message: &MonitorMessage) {
     let (direction_symbol, self_is_target) = match monitor_message.direction {
-        Direction::Incoming => ("<<<".bright_green(), true),
-        Direction::Outgoing => (">>>".bright_blue(), false),
+        Direction::Incoming => ("<<<".green(), true),
+        Direction::Outgoing => (">>>".blue(), false),
     };
 
     println!(
-        "{} {} {}: {}{}{} {:?}",
+        "{} {} {}: {}{}{} {}",
         short_name(service_name, self_is_target),
         direction_symbol,
         short_name(&monitor_message.peer_name, !self_is_target),
-        "[".bright_yellow(),
+        "[".yellow(),
         monitor_message.message.id,
-        "]".bright_yellow(),
-        monitor_message.message.data
+        "]".yellow(),
+        format_data(monitor_message.message.data.clone())
     );
 }
 

@@ -30,20 +30,28 @@
 //! ```
 //!
 
-use std::{path::PathBuf, str::FromStr};
+mod helper;
+
+use std::{
+    io::{stdout, Write},
+    path::PathBuf,
+    str::FromStr,
+    time::Duration,
+};
 
 use clap::{self, Parser};
 use colored::*;
 use futures::StreamExt;
+use helper::Helper;
 use log::{LevelFilter, *};
-use rustyline::{error::ReadlineError, ColorMode, Config, DefaultEditor, Result};
+use rustyline::{error::ReadlineError, ColorMode, Config, Editor, Result};
 use serde_json::Value;
 
 use krossbar_bus_common::{
     protocols::inspections::{InspectData, INSPECT_METHOD},
     CONNECT_SERVICE_NAME, DEFAULT_HUB_SOCKET_PATH,
 };
-use krossbar_bus_lib::{Client, Service};
+use krossbar_bus_lib::{client::Stream, Client, Service};
 
 /// Krossbar bus connect
 #[derive(Parser, Debug)]
@@ -79,17 +87,73 @@ fn print_help() {
     println!("\t{} Quit", "q".bright_blue());
 }
 
-fn format_response(endpoint_type: &str, endpoint_name: &str, json: &Value) {
-    println!(
+/// Pretty format
+fn format_response(endpoint_type: &str, endpoint_name: &str, json: &Value) -> String {
+    format!(
         "{} {} '{}' response: {}",
         ">".bright_blue(),
         endpoint_type,
         endpoint_name,
-        json
-    );
+        json,
+    )
 }
 
-async fn handle_input_line(client: &mut Client, line: &String, service_name: &str) -> bool {
+/// A method to insert signal response on a previous line to keep current input
+fn insert_on_previous_line(string: String, helper: &Helper) {
+    let mut lock = stdout().lock();
+
+    write!(
+        lock,
+        "\x1b[2K\x1b[s\x1b[F\r\n{}\n{}{}\x1b[u",
+        string,
+        ">> ".bright_green(),
+        helper.get_user_input(),
+    )
+    .unwrap();
+
+    lock.flush().unwrap();
+}
+
+fn start_polling_subcription(
+    mut subscription: Stream<Value>,
+    signal_name: String,
+    helper: &Helper,
+) {
+    let helper = helper.clone();
+
+    tokio::spawn(async move {
+        while let Some(value_result) = subscription.next().await {
+            // This make formatting better when we have a signal as a direct response to a method call.
+            // So, it first prints out the method, and after the signal response
+            tokio::time::sleep(Duration::from_millis(1)).await;
+
+            match value_result {
+                Ok(json) => {
+                    insert_on_previous_line(format_response("Signal", &signal_name, &json), &helper)
+                }
+                Err(err) => {
+                    insert_on_previous_line(
+                        format!(
+                            "Error subscribing to a signal '{}': {}",
+                            signal_name,
+                            err.to_string()
+                        ),
+                        &helper,
+                    );
+
+                    return;
+                }
+            }
+        }
+    });
+}
+
+async fn handle_input_line(
+    client: &mut Client,
+    line: &String,
+    service_name: &str,
+    helper: &Helper,
+) -> bool {
     let words: Vec<String> = line.split(' ').map(|s| s.to_owned()).collect();
 
     if words.len() == 0 {
@@ -119,7 +183,7 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
         };
 
         match client.call(&words[1], &json).await {
-            Ok(response) => format_response("Method", &words[1], &response),
+            Ok(response) => println!("{}", format_response("Method", &words[1], &response)),
             Err(err) => {
                 eprintln!("Failed to make a call: {}", err.to_string())
             }
@@ -131,24 +195,9 @@ async fn handle_input_line(client: &mut Client, line: &String, service_name: &st
         }
 
         let signal_name = words[1].clone();
-        match client.subscribe::<Value>(&words[1]).await {
-            Ok(mut stream) => {
-                tokio::spawn(async move {
-                    while let Some(value_result) = stream.next().await {
-                        match value_result {
-                            Ok(json) => format_response("Signal", &signal_name, &json),
-                            Err(err) => {
-                                eprintln!(
-                                    "Error subscribing to a signal '{}': {}",
-                                    words[1],
-                                    err.to_string()
-                                );
-
-                                return;
-                            }
-                        }
-                    }
-                });
+        match client.subscribe::<Value>(&signal_name).await {
+            Ok(stream) => {
+                start_polling_subcription(stream, signal_name, helper);
             }
             Err(err) => {
                 eprintln!(
@@ -207,14 +256,24 @@ async fn main() -> Result<()> {
     tokio::spawn(service.run());
 
     let config = Config::builder().color_mode(ColorMode::Enabled).build();
-    let mut rl = DefaultEditor::with_config(config)?;
+    let mut rl = Editor::with_config(config)?;
+
+    let input_tracker = Helper::new();
+    rl.set_helper(Some(input_tracker.clone()));
 
     loop {
         let readline = rl.readline(&format!("{}", ">> ".bright_green()));
 
         match readline {
             Ok(line) => {
-                if handle_input_line(&mut target_service, &line, &args.target_service).await {
+                if handle_input_line(
+                    &mut target_service,
+                    &line,
+                    &args.target_service,
+                    &input_tracker,
+                )
+                .await
+                {
                     return Ok(());
                 }
 
