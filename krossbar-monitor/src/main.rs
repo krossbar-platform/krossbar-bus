@@ -138,7 +138,7 @@ fn format_data(data: RpcData) -> String {
     }
 }
 
-async fn handle_message(service_name: &str, monitor_message: &MonitorMessage) {
+fn handle_message(service_name: &str, monitor_message: &MonitorMessage) {
     let (direction_symbol, self_is_target) = match monitor_message.direction {
         Direction::Incoming => ("<<<".green(), true),
         Direction::Outgoing => (">>>".blue(), false),
@@ -176,8 +176,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     service
         .register_method(
             MESSAGE_METHOD,
-            |service_name: String, message: MonitorMessage| async move {
-                handle_message(&service_name, &message).await
+            |service_name: String, message: MonitorMessage| {
+                handle_message(&service_name, &message);
             },
         )
         .expect("Failed to register signalling function");

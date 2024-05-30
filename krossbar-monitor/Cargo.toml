@@ -1,6 +1,6 @@
 [package]
 name = "krossbar-monitor"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 rust-version = "1.75"
 authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
@@ -23,5 +23,5 @@ pretty_env_logger = "0.5"
 tokio = { version = "1.37", features = ["macros", "rt"] }
 
 krossbar-common-rpc = { version = "0.5.4", features = ["impl-monitor"] }
-krossbar-bus-lib = "0.5.3"
+krossbar-bus-lib = "0.5.5"
 krossbar-bus-common = "0.5.0"
