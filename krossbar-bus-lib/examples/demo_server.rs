@@ -12,7 +12,7 @@ use krossbar_bus_lib::service::Service;
 #[tokio::main]
 async fn main() {
     pretty_env_logger::formatted_builder()
-        .filter_level(LevelFilter::Info)
+        .filter_level(LevelFilter::Debug)
         .init();
 
     // Making a new Krossbar service

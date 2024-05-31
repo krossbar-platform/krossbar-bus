@@ -63,6 +63,11 @@ impl Client {
             Ok(data) => data.await,
             // Client disconnected. Wait for main loop to reconnect
             Err(_) => {
+                info!(
+                    "Client {} disconnected. Waiting to reconnect",
+                    self.service_name
+                );
+
                 if let Err(e) = self.reconnect_signal.wait().await {
                     Err(e)
                 } else {
@@ -177,7 +182,7 @@ impl ClientHandle {
             rpc,
             hub_connection,
             hub_reconnect_signal,
-            outgoing: Arc::new(false.into()),
+            outgoing: Arc::new(true.into()),
             reconnect_signal: AsyncSignal::new(),
             wait_connect,
         })
@@ -200,25 +205,35 @@ impl ClientHandle {
             None => {
                 // Client disconnected
                 if self.outgoing.load(Ordering::Relaxed) {
+                    warn!("Outgoing connection lost. Trying to reconnect");
+
                     // Failing handshake means we've lost permissions to connect
-                    if Self::hub_connect(
+                    match Self::hub_connect(
                         &self.hub_connection,
                         &self.hub_reconnect_signal,
                         &self.service_name,
                         self.wait_connect,
                     )
                     .await
-                    .is_err()
                     {
-                        self.reconnect_signal
-                            .emit(Err(crate::Error::PeerDisconnected))
-                            .await;
-                        ClientEvent::Disconnect(self.service_name.clone())
-                    } else {
-                        self.reconnect_signal.emit(Ok(())).await;
-                        Box::pin(self.poll()).await
+                        Ok(rpc) => {
+                            self.rpc.on_reconnected(rpc).await;
+
+                            self.reconnect_signal.emit(Ok(())).await;
+                            Box::pin(self.poll()).await
+                        }
+                        Err(_) => {
+                            warn!("Hub rejected reconnect request");
+
+                            self.reconnect_signal
+                                .emit(Err(crate::Error::PeerDisconnected))
+                                .await;
+                            ClientEvent::Disconnect(self.service_name.clone())
+                        }
                     }
                 } else {
+                    info!("Incoming connection lost");
+
                     self.reconnect_signal
                         .emit(Err(crate::Error::PeerDisconnected))
                         .await;
