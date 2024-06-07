@@ -2,6 +2,7 @@
 Description=Krossbar platform hub
 
 [Service]
+ExecStartPre=-mkdir /etc/krossbar/services/
 ExecStart=/usr/local/bin/krossbar-hub
 StandardOutput=journal
 Restart=always

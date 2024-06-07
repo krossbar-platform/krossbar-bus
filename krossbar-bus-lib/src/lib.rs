@@ -5,7 +5,7 @@
 //! Krossbar services utilize UDS to communicate with each other.
 //! Krossbar hub acts as a point of rendezvous for the services, checking permissions and connecting counterparties.
 //!
-//! The library uses [krossbar_common_rpc::rpc::Rpc] connections to comunicate.
+//! The library uses [krossbar_rpc::rpc::Rpc] connections to comunicate.
 //!
 //! To register a service call [Service::new]. This makes a call to the hub trying to register a service with a given name.
 //!
@@ -109,7 +109,7 @@ pub mod endpoints;
 pub mod service;
 mod signal;
 
-pub use krossbar_common_rpc::{Error, Result};
+pub use krossbar_rpc::{Error, Result};
 
 pub use client::Client;
 pub use endpoints::{Signal, State};

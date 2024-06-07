@@ -4,7 +4,7 @@ use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_MET
 use log::{info, warn};
 use tokio::net::UnixStream;
 
-use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
+use krossbar_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
 
 use crate::hub::ContextType;
 
@@ -38,7 +38,7 @@ impl Client {
 
                     match request.take_body().unwrap() {
                         // Valid call message
-                        krossbar_common_rpc::request::Body::Call(bson) => {
+                        krossbar_rpc::request::Body::Call(bson) => {
                             // Valid Auth message
                             match bson::from_bson::<HubMessage>(bson) {
                                 Ok(HubMessage::Connect {

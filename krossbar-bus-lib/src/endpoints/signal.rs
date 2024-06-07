@@ -4,7 +4,7 @@ use futures::{lock::Mutex, stream, Future, StreamExt};
 use log::debug;
 use serde::Serialize;
 
-use krossbar_common_rpc::writer::RpcWriter;
+use krossbar_rpc::writer::RpcWriter;
 
 type SubVectorType = Arc<Mutex<Vec<(i64, RpcWriter)>>>;
 

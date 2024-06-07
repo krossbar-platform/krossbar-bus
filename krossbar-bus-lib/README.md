@@ -18,7 +18,7 @@ A library to register and connect Krossbar services
 Krossbar services utilize UDS to communicate with each other.
 Krossbar hub acts as a point of rendezvous for the services, checking permissions and connecting counterparties.
 
-The library uses [krossbar_common_rpc::rpc::Rpc](https://docs.rs/krossbar-common-rpc/latest/krossbar_common_rpc/rpc/struct.Rpc.html) connections to comunicate.
+The library uses [krossbar_rpc::rpc::Rpc](https://docs.rs/krossbar-rpc/latest/krossbar_rpc/rpc/struct.Rpc.html) connections to comunicate.
 
 To register a service call [Service::new](https://docs.rs/krossbar-bus-lib/latest/krossbar_bus_lib/service/struct.Service.html#method.new). This makes a call to the hub trying to register a service with a given name.
 

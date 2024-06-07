@@ -7,7 +7,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 #[cfg(feature = "inspection")]
 use krossbar_bus_common::protocols::inspections::{InspectData, INSPECT_METHOD};
-use krossbar_common_rpc::request::{Body, RpcRequest};
+use krossbar_rpc::request::{Body, RpcRequest};
 
 pub mod signal;
 pub mod state;

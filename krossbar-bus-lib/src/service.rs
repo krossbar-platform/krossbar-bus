@@ -15,7 +15,7 @@ use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::{net::UnixStream, signal::ctrl_c, time};
 
-use krossbar_common_rpc::{
+use krossbar_rpc::{
     monitor::Monitor,
     request::{Body, RpcRequest},
     rpc::Rpc,

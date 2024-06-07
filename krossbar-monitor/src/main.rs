@@ -27,13 +27,14 @@ use std::path::PathBuf;
 use bson::Bson;
 use clap::{self, Parser};
 use colored::*;
+use log::{LevelFilter, *};
+
 use krossbar_bus_common::{DEFAULT_HUB_SOCKET_PATH, MONITOR_SERVICE_NAME};
 use krossbar_bus_lib::Service;
-use krossbar_common_rpc::{
+use krossbar_rpc::{
     monitor::{Direction, MonitorMessage, MESSAGE_METHOD},
     RpcData,
 };
-use log::{LevelFilter, *};
 
 /// Krossbar bus monitor
 #[derive(Parser, Debug)]
@@ -91,7 +92,7 @@ fn short_name(name: &str, target_service: bool) -> String {
 //     FdResponse(crate::Result<Bson>),
 // }
 fn format_data(data: RpcData) -> String {
-    let format_result = |value: krossbar_bus_lib::Result<Bson>| -> String {
+    let format_result = |value: krossbar_rpc::Result<Bson>| -> String {
         match value {
             Ok(body) => format!(
                 "{} {}",

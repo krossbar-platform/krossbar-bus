@@ -10,7 +10,7 @@ use log::*;
 use tokio::net::unix::UCred;
 
 use krossbar_bus_common::{CONNECT_SERVICE_NAME, DEFAULT_SERVICE_FILES_DIR, MONITOR_SERVICE_NAME};
-use krossbar_common_rpc::{Error, Result};
+use krossbar_rpc::{Error, Result};
 
 use crate::service_names::NamePattern;
 

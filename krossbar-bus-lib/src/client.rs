@@ -13,7 +13,7 @@ use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::signal::AsyncSignal;
-use krossbar_common_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter};
+use krossbar_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter};
 
 pub type Stream<T> = Pin<Box<dyn FusedStream<Item = crate::Result<T>> + Send>>;
 
