@@ -23,7 +23,7 @@ use krossbar_rpc::{
 
 use crate::{
     endpoints::{signal::Signal, state::State, Endpoints},
-    signal::AsyncSignal,
+    event::Event,
 };
 
 use super::{
@@ -49,7 +49,7 @@ pub struct Service {
     /// Self hub connection
     hub_connection: Rpc,
     /// A handle to signal clients if reconnected
-    reconnect_signal: AsyncSignal<crate::Result<()>>,
+    reconnect_signal: Event<crate::Result<()>>,
     /// Hub socket path
     hub_socket_path: PathBuf,
 }
@@ -68,7 +68,7 @@ impl Service {
             client_map: HashMap::new(),
             client_poll_handles: clients,
             hub_connection,
-            reconnect_signal: AsyncSignal::new(),
+            reconnect_signal: Event::new(),
             hub_socket_path: hub_socket_path.into(),
         })
     }

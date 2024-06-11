@@ -107,7 +107,7 @@
 pub mod client;
 pub mod endpoints;
 pub mod service;
-mod signal;
+mod event;
 
 pub use krossbar_rpc::{Error, Result};
 

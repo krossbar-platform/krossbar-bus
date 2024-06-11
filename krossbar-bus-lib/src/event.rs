@@ -2,12 +2,12 @@ use async_channel::{unbounded, Receiver, Sender};
 use log::trace;
 
 #[derive(Clone)]
-pub(crate) struct AsyncSignal<T: Send> {
+pub(crate) struct Event<T: Send> {
     sender: Sender<T>,
     receiver: Receiver<T>,
 }
 
-impl<T: Send> AsyncSignal<T> {
+impl<T: Send> Event<T> {
     pub fn new() -> Self {
         let (sender, receiver) = unbounded();
         Self { sender, receiver }

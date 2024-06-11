@@ -12,7 +12,7 @@ use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_MET
 use log::{debug, error, info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::signal::AsyncSignal;
+use crate::event::Event;
 use krossbar_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter};
 
 pub type Stream<T> = Pin<Box<dyn FusedStream<Item = crate::Result<T>> + Send>>;
@@ -24,9 +24,8 @@ pub struct Client {
     service_name: String,
     /// Peer writer to send messages
     writer: RpcWriter,
-    /// Hub reconnect signal to wait if hub is down,
-    /// but we need to reconnect to the peer
-    reconnect_signal: AsyncSignal<crate::Result<()>>,
+    /// Hub reconnect event to listen if hub is disconnected
+    hub_reconnect_event: Event<crate::Result<()>>,
     /// If the connection is outgoing. If it is we try to reconnect to
     /// the service if connection dropped
     outgoing: Arc<AtomicBool>,
@@ -36,13 +35,13 @@ impl Client {
     pub(crate) fn new(
         service_name: String,
         writer: RpcWriter,
-        reconnect_signal: AsyncSignal<crate::Result<()>>,
+        hub_reconnect_event: Event<crate::Result<()>>,
         outgoing: Arc<AtomicBool>,
     ) -> Self {
         Self {
             service_name,
             writer,
-            reconnect_signal,
+            hub_reconnect_event,
             outgoing,
         }
     }
@@ -68,7 +67,7 @@ impl Client {
                     self.service_name
                 );
 
-                if let Err(e) = self.reconnect_signal.wait().await {
+                if let Err(e) = self.hub_reconnect_event.wait().await {
                     Err(e)
                 } else {
                     Box::pin(self.call(endpoint, params)).await
@@ -89,7 +88,7 @@ impl Client {
             Ok(data) => Ok(data),
             // Client disconnected. Wait for main loop to reconnect
             Err(_) => {
-                if let Err(e) = self.reconnect_signal.wait().await {
+                if let Err(e) = self.hub_reconnect_event.wait().await {
                     Err(e)
                 } else {
                     Box::pin(self.message(endpoint, body)).await
@@ -112,7 +111,7 @@ impl Client {
                     e.to_string()
                 );
 
-                if let Err(e) = self.reconnect_signal.wait().await {
+                if let Err(e) = self.hub_reconnect_event.wait().await {
                     Err(e)
                 } else {
                     Box::pin(self.subscribe(endpoint)).await
@@ -136,9 +135,9 @@ pub(crate) struct ClientHandle {
     service_name: String,
     rpc: Rpc,
     hub_connection: RpcWriter,
-    hub_reconnect_signal: AsyncSignal<crate::Result<()>>,
+    hub_reconnect_event: Event<crate::Result<()>>,
     outgoing: Arc<AtomicBool>,
-    reconnect_signal: AsyncSignal<crate::Result<()>>,
+    self_reconnect_event: Event<crate::Result<()>>,
     wait_connect: bool,
 }
 
@@ -147,16 +146,16 @@ impl ClientHandle {
         service_name: String,
         rpc: Rpc,
         hub_connection: RpcWriter,
-        hub_reconnect_signal: AsyncSignal<crate::Result<()>>,
+        hub_reconnect_event: Event<crate::Result<()>>,
         wait_connect: bool,
     ) -> Self {
         Self {
             service_name,
             rpc,
             hub_connection,
-            hub_reconnect_signal,
+            hub_reconnect_event,
             outgoing: Arc::new(false.into()),
-            reconnect_signal: AsyncSignal::new(),
+            self_reconnect_event: Event::new(),
             wait_connect,
         }
     }
@@ -164,14 +163,14 @@ impl ClientHandle {
     pub async fn connect(
         service_name: &str,
         hub_connection: RpcWriter,
-        hub_reconnect_signal: AsyncSignal<crate::Result<()>>,
+        hub_reconnect_event: Event<crate::Result<()>>,
         wait_connect: bool,
     ) -> crate::Result<Self> {
         let service_name = service_name.to_owned();
 
         let rpc = Self::hub_connect(
             &hub_connection,
-            &hub_reconnect_signal,
+            &hub_reconnect_event,
             &service_name,
             wait_connect,
         )
@@ -181,9 +180,9 @@ impl ClientHandle {
             service_name,
             rpc,
             hub_connection,
-            hub_reconnect_signal,
+            hub_reconnect_event,
             outgoing: Arc::new(true.into()),
-            reconnect_signal: AsyncSignal::new(),
+            self_reconnect_event: Event::new(),
             wait_connect,
         })
     }
@@ -192,7 +191,7 @@ impl ClientHandle {
         Client::new(
             self.service_name.clone(),
             self.rpc.writer().clone(),
-            self.reconnect_signal.clone(),
+            self.self_reconnect_event.clone(),
             self.outgoing.clone(),
         )
     }
@@ -210,7 +209,7 @@ impl ClientHandle {
                     // Failing handshake means we've lost permissions to connect
                     match Self::hub_connect(
                         &self.hub_connection,
-                        &self.hub_reconnect_signal,
+                        &self.hub_reconnect_event,
                         &self.service_name,
                         self.wait_connect,
                     )
@@ -219,13 +218,13 @@ impl ClientHandle {
                         Ok(rpc) => {
                             self.rpc.on_reconnected(rpc).await;
 
-                            self.reconnect_signal.emit(Ok(())).await;
+                            self.self_reconnect_event.emit(Ok(())).await;
                             Box::pin(self.poll()).await
                         }
                         Err(_) => {
                             warn!("Hub rejected reconnect request");
 
-                            self.reconnect_signal
+                            self.self_reconnect_event
                                 .emit(Err(crate::Error::PeerDisconnected))
                                 .await;
                             ClientEvent::Disconnect(self.service_name.clone())
@@ -234,7 +233,7 @@ impl ClientHandle {
                 } else {
                     info!("Incoming connection lost");
 
-                    self.reconnect_signal
+                    self.self_reconnect_event
                         .emit(Err(crate::Error::PeerDisconnected))
                         .await;
                     ClientEvent::Disconnect(self.service_name.clone())
@@ -245,7 +244,7 @@ impl ClientHandle {
 
     async fn hub_connect(
         hub_connection: &RpcWriter,
-        hub_reconnect_signal: &AsyncSignal<crate::Result<()>>,
+        hub_reconnect_event: &Event<crate::Result<()>>,
         service_name: &String,
         wait: bool,
     ) -> crate::Result<Rpc> {
@@ -274,7 +273,7 @@ impl ClientHandle {
                         "Failed to reconnect to a client: {e:?}. Hub is down. Waiting to reconnect"
                     );
 
-                    hub_reconnect_signal.wait().await?
+                    hub_reconnect_event.wait().await?
                 }
             }
         }
