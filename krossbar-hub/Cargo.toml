@@ -43,6 +43,7 @@ thiserror = "1.0"
 
 krossbar-bus-common = "0.5.0"
 krossbar-rpc = "0.5.5"
+krossbar-state-machine = "0.5.3"
 
 [dev-dependencies]
 rstest = "0.19"

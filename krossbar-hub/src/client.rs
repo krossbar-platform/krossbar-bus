@@ -1,10 +1,11 @@
 use std::time::Duration;
 
-use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 use log::{info, warn};
 use tokio::net::UnixStream;
 
 use krossbar_rpc::{request::RpcRequest, rpc::Rpc, writer::RpcWriter, Error, Result};
+
+use krossbar_bus_common::protocols::hub::{Message as HubMessage, HUB_CONNECT_METHOD};
 
 use crate::hub::ContextType;
 
@@ -15,15 +16,21 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(context: ContextType, rpc: Rpc, service_name: String) -> Self {
-        Self {
+    pub async fn run(
+        (rpc, context, service_name): (Rpc, ContextType, String),
+    ) -> std::result::Result<String, ()> {
+        let this = Self {
             context,
             rpc,
-            service_name,
-        }
+            service_name: service_name.clone(),
+        };
+
+        this.client_loop().await;
+
+        Ok(service_name)
     }
 
-    pub async fn run(mut self) -> String {
+    pub async fn client_loop(mut self) -> String {
         loop {
             match self.rpc.poll().await {
                 Some(mut request) => {

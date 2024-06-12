@@ -9,6 +9,7 @@ use futures::{
     stream::FuturesUnordered,
     Future, StreamExt as _,
 };
+use krossbar_state_machine::Machine;
 use log::{debug, info, warn};
 use tokio::net::{unix::UCred, UnixListener};
 
@@ -81,9 +82,13 @@ impl Hub {
                                 match credentials {
                                     Ok(credentials) => {
                                         info!("New connection request: {credentials:?}");
-                                        let connection = Self::make_new_connection(rpc, credentials, self.context.clone());
 
-                                        self.tasks.push(Box::pin(connection))
+                                        let client_machine = Machine::init((rpc, credentials, self.context.clone()))
+                                            .then(Self::authorize)
+                                            .then(Client::run)
+                                            .unwrap(Self::client_name);
+
+                                        self.tasks.push(Box::pin(client_machine))
                                     },
                                     Err(e) => {
                                         warn!("Failed to get client creadentials: {}", e.to_string());
@@ -120,13 +125,11 @@ impl Hub {
         let _ = std::fs::remove_file(&self.socket_path);
     }
 
-    /// Make a connection form a stream
-    /// Note: In case of an error use [RpcWriter::flush] to send response before dropping client connection
-    async fn make_new_connection(
-        mut rpc: Rpc,
-        credentials: UCred,
-        context: ContextType,
-    ) -> Option<String> {
+    async fn authorize(
+        (mut rpc, credentials, context): (Rpc, UCred, ContextType),
+    ) -> std::result::Result<(Rpc, ContextType, String), ()> {
+        debug!("New client connection. Waiting for an auth message");
+
         // Authorize the client
         let service_name = match rpc.poll().await {
             Some(mut request) => {
@@ -173,7 +176,7 @@ impl Hub {
                                         request.respond::<()>(Err(e)).await;
                                         request.writer().flush().await;
 
-                                        return None;
+                                        return Err(());
                                     }
                                 }
                             }
@@ -188,7 +191,7 @@ impl Hub {
                                     .await;
                                 request.writer().flush().await;
 
-                                return None;
+                                return Err(());
                             }
                             // Message deserialization error
                             Err(e) => {
@@ -199,7 +202,7 @@ impl Hub {
                                     .await;
                                 request.writer().flush().await;
 
-                                return None;
+                                return Err(());
                             }
                         }
                     }
@@ -213,18 +216,24 @@ impl Hub {
                             .await;
                         request.writer().flush().await;
 
-                        return None;
+                        return Err(());
                     }
                 }
             }
             // Client disconnected
             _ => {
-                return None;
+                return Err(());
             }
         };
 
-        // Cient succesfully authorized. Start client loop
-        Some(Client::new(context.clone(), rpc, service_name).run().await)
+        Ok((rpc, context, service_name))
+    }
+
+    fn client_name(status: std::result::Result<String, ()>) -> Option<String> {
+        match status {
+            Ok(service_name) => Some(service_name),
+            _ => None,
+        }
     }
 
     /// Handle client Auth message
