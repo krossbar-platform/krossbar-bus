@@ -88,7 +88,9 @@ impl Hub {
                                             .then(Client::run)
                                             .unwrap(Self::client_name);
 
-                                        self.tasks.push(Box::pin(client_machine))
+                                        self.tasks.push(Box::pin(client_machine));
+
+                                        debug!("New clients count {}", self.tasks.len());
                                     },
                                     Err(e) => {
                                         warn!("Failed to get client creadentials: {}", e.to_string());
@@ -114,6 +116,8 @@ impl Hub {
                                 debug!("Anonymous client disconnected");
                             }
                         }
+
+                        debug!("New clients count {}", self.tasks.len());
                     },
                     _ = tokio::signal::ctrl_c().fuse() => return
                 }

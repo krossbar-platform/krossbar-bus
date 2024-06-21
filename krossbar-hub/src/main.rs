@@ -20,8 +20,8 @@
 //! Basic service file `com.example.echo.service` may look like the following:
 //! ```json
 //! {
-//! "exec": "/data/krossbar/*",
-//! "incoming_connections": ["**"]
+//!     "exec": "/data/krossbar/*",
+//!     "incoming_connections": ["**"]
 //! }
 //! ```
 //!
