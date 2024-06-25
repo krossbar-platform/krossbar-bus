@@ -12,7 +12,10 @@ members = [
 [workspace.package]
 edition = "2021"
 rust-version = "1.75"
-authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
+authors = [
+    "Alexander Smoktal <https://github.com/alexander-smoktal>",
+    "Krossbar team",
+]
 license = "MIT"
 repository = "https://github.com/krossbar-platform/krossbar-bus"
 homepage = "https://krossbar.rs"
