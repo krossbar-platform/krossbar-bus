@@ -1,27 +1,28 @@
 [package]
 name = "krossbar-monitor"
 version = "0.5.3"
-edition = "2021"
-rust-version = "1.75"
-authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
-license = "MIT"
 readme = "README.md"
-repository = "https://github.com/krossbar-platform/krossbar-bus"
-homepage = "https://krossbar.rs"
 description = """
 Krossbar bus monitor
 """
 categories = ["network-programming"]
 keywords = ["rpc", "messaging"]
 
-[dependencies]
-bson = "2.10"
-clap = { version = "4.5", features = ["derive", "color"] }
-colored = "2.1"
-log = "0.4"
-pretty_env_logger = "0.5"
-tokio = { version = "1.37", features = ["macros", "rt"] }
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
-krossbar-rpc = { version = "0.5.5", features = ["impl-monitor"] }
-krossbar-bus-lib = "0.5.5"
-krossbar-bus-common = "0.5.0"
+[dependencies]
+bson = { workspace = true }
+clap = { workspace = true, features = ["derive", "color"] }
+colored = { workspace = true }
+log = { workspace = true }
+pretty_env_logger = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+krossbar-rpc = { workspace = true, features = ["impl-monitor"] }
+krossbar-bus-lib = { workspace = true }
+krossbar-bus-common = { workspace = true }

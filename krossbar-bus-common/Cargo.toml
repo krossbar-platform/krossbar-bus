@@ -1,19 +1,20 @@
 [package]
 name = "krossbar-bus-common"
 version = "0.5.0"
-edition = "2021"
-rust-version = "1.75"
-authors = ["Alexander Smoktal <https://github.com/alexander-smoktal>"]
-license = "MIT"
 readme = "README.md"
-repository = "https://github.com/krossbar-platform/krossbar-bus"
-homepage = "https://krossbar.rs"
 description = """
 Krossbar bus common library
 """
 categories = ["network-programming"]
 keywords = ["rpc", "messaging"]
 
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
 [dependencies]
-colored = "2.1"
-serde = { version = "1.0", features = ["derive"] }
+colored = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
